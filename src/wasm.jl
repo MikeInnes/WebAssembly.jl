@@ -5,12 +5,7 @@ WType(::Type{Int64}) = i64
 WType(::Type{Float32}) = f32
 WType(::Type{Float64}) = f64
 
-jltype(x::WType) =
-  x == i32 ? Int32 :
-  x == i64 ? Int64 :
-  x == f32 ? Float32 :
-  x == f64 ? Float64 :
-  error("Unrecognised WType $x")
+jltype(x::WType) = [Int32, Int64, Float32, Float64][Int(x)+1]
 
 struct Const
   typ::WType
