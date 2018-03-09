@@ -1,6 +1,6 @@
 module WebAssembly
 
-include("wasm.jl")
-include("looper.jl")
+include("wasm/wasm.jl")
+include("julia/looper.jl")
 
 end # module
