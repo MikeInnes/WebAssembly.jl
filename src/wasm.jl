@@ -15,6 +15,10 @@ end
 Const(x::Union{Int64,Int32})     = Const(WType(typeof(x)), reinterpret(UInt64, Int64(x)))
 Const(x::Union{Float64,Float32}) = Const(WType(typeof(x)), reinterpret(UInt64, Float64(x)))
 
+value(x::Const) = value(x, jltype(x.typ))
+value(x::Const, T::Union{Type{Float64},Type{Int64}}) = reinterpret(T, x.val)
+value(x::Const, T::Union{Type{Float32},Type{Int32}}) = T(value(x, widen(T)))
+
 struct Local
   id::Int
 end
@@ -39,7 +43,7 @@ end
 
 # Printing
 
-Base.show(io::IO, i::Const) =  print(io, i.typ, ".const ", reinterpret(jltype(i.typ), i.val))
+Base.show(io::IO, i::Const) =  print(io, i.typ, ".const ", value(i))
 Base.show(io::IO, i::Local) =  print(io, "get_local ", i.id)
 Base.show(io::IO, i::Binary) = print(io, i.typ, ".", i.name)
 
