@@ -1,5 +1,5 @@
 module WebAssembly
 
-# package code goes here
+include("looper.jl")
 
 end # module
