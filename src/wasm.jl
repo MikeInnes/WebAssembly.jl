@@ -21,7 +21,6 @@ Const(x::Union{Int64,Int32})     = Const(WType(typeof(x)), reinterpret(UInt64, I
 Const(x::Union{Float64,Float32}) = Const(WType(typeof(x)), reinterpret(UInt64, Float64(x)))
 
 struct Local
-  tee::Bool
   id::Int
 end
 
@@ -46,7 +45,7 @@ end
 # Printing
 
 Base.show(io::IO, i::Const) =  print(io, i.typ, ".const ", reinterpret(jltype(i.typ), i.val))
-Base.show(io::IO, i::Local) =  print(io, i.tee ? "tee_local" : "get_local", " ", i.id)
+Base.show(io::IO, i::Local) =  print(io, "get_local ", i.id)
 Base.show(io::IO, i::Binary) = print(io, i.typ, ".", i.name)
 
 function Base.show(io::IO, f::Func)
