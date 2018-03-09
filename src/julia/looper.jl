@@ -1,17 +1,15 @@
-using Base.Meta
-
-maxlabel(c::CodeInfo) = maximum(l isa LabelNode ? l.label : -1 for l in c.code)
+maxlabel(code) = maximum(l isa LabelNode ? l.label : -1 for l in code)
 
 isgoto(::GotoNode) = true
 isgoto(x) = isexpr(x, :gotoifnot)
 isjump(x) = isgoto(x) || isexpr(x, :return)
 
-function blocks(c::CodeInfo)
-  l = maxlabel(c)
+function blocks(code)
+  l = maxlabel(code)
   bs = Dict{Int,Vector{Any}}()
   label = 1
   current = bs[1] = []
-  for x in c.code
+  for x in code
     if x isa LabelNode
       label = x.label
       isjump(current[end]) || push!(current, GotoNode(label))
@@ -61,7 +59,7 @@ function loop_next(bs, label)
 end
 
 # NOTE: this will break if arbitrary gotos are used.
-function rebuild(bs, entries = 1, loops = [], cond = nothing)
+function restructure(bs::Associative, entries = 1, loops = [], cond = nothing)
   if isempty(entries)
     Expr(:block)
   elseif length(entries) == 1
@@ -73,18 +71,20 @@ function rebuild(bs, entries = 1, loops = [], cond = nothing)
     end
     code, cond = splitcondition(bs[l])
     if l ∉ accessible(bs, l, loops)
-      Expr(:block, code..., rebuild(bs, branches(bs[l]), loops, cond))
+      Expr(:block, code..., restructure(bs, branches(bs[l]), loops, cond))
     else
       Expr(:block,
-        Expr(:while, true, code..., rebuild(bs, branches(bs[l]), [loops..., l], cond)),
-        rebuild(bs, loop_next(bs, l), loops))
+        Expr(:while, true, Expr(:block, code..., restructure(bs, branches(bs[l]), [loops..., l], cond))),
+        restructure(bs, loop_next(bs, l), loops))
     end
   elseif length(entries) == 2 && cond != nothing
     as = accessible(bs, entries...)
     :($cond ?
-      $(rebuild(bs, entries[1], loops)) :
-      $(rebuild(bs, entries[2], loops)))
+      $(restructure(bs, entries[1], loops)) :
+      $(restructure(bs, entries[2], loops)))
   else
     error("Rebuild error")
   end
 end
+
+restructure(code) = restructure(blocks(code))

@@ -7,7 +7,9 @@ WType(::Type{Float64}) = f64
 
 jltype(x::WType) = [Int32, Int64, Float32, Float64][Int(x)+1]
 
-struct Const
+abstract type Instruction end
+
+struct Const <: Instruction
   typ::WType
   val::UInt64
 end
@@ -19,33 +21,53 @@ value(x::Const) = value(x, jltype(x.typ))
 value(x::Const, T::Union{Type{Float64},Type{Int64}}) = reinterpret(T, x.val)
 value(x::Const, T::Union{Type{Float32},Type{Int32}}) = T(value(x, widen(T)))
 
-struct Local
+struct Local <: Instruction
   id::Int
 end
 
-struct Binary
+struct SetLocal <: Instruction
+  tee::Bool
+  id::Int
+end
+
+struct BinaryOp <: Instruction
   typ::WType
   name::Symbol
 end
 
-const Instruction = Union{Const,Local,Binary}
+struct If <: Instruction
+  t::Vector{Instruction}
+  f::Vector{Instruction}
+end
 
-struct Func
+struct Loop <: Instruction
+  body::Vector{Instruction}
+end
+
+struct Branch <: Instruction
+  conditional::Bool
+  level::Int
+end
+
+struct Return <: Instruction end
+
+struct Func <: Instruction
   params::Vector{WType}
   returns::Vector{WType}
   locals::Vector{WType}
   body::Vector{Instruction}
 end
 
-struct Module
+struct Module <: Instruction
   funcs::Vector{Func}
 end
 
 # Printing
 
-Base.show(io::IO, i::Const) =  print(io, i.typ, ".const ", value(i))
-Base.show(io::IO, i::Local) =  print(io, "get_local ", i.id)
-Base.show(io::IO, i::Binary) = print(io, i.typ, ".", i.name)
+Base.show(io::IO, i::Const) =  print(io, "(", i.typ, ".const ", value(i), ")")
+Base.show(io::IO, i::Local) =  print(io, "(get_local ", i.id, ")")
+Base.show(io::IO, i::BinaryOp) = print(io, "(", i.typ, ".", i.name, ")")
+Base.show(io::IO, i::Return) =  print(io, "(return)")
 
 function Base.show(io::IO, f::Func)
   print(io, "(func")
