@@ -109,17 +109,19 @@ end
 
 # Convert to WASM instructions
 
+towasm_(xs, is = Instruction[]) = (foreach(x -> towasm(x, is), xs); is)
+
 function towasm(x, is = Instruction[])
   if x isa Instruction
     push!(is, x)
   elseif isexpr(x, :block)
-    push!(is, Block(vcat(towasm.(x.args)...)))
+    push!(is, Block(towasm_(x.args)))
   elseif isexpr(x, :call) && x.args[1] isa Instruction
     foreach(x -> towasm(x, is), x.args[2:end])
     push!(is, x.args[1])
   elseif isexpr(x, :if)
     towasm(x.args[1], is)
-    push!(is, If(towasm(x.args[2]), towasm(x.args[3])))
+    push!(is, If(towasm_(x.args[2].args), towasm_(x.args[3].args)))
   elseif x isa Number
     push!(is, Const(x))
   elseif x isa LineNumberNode
