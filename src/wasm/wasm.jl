@@ -57,6 +57,8 @@ struct Branch <: Instruction
   level::Int
 end
 
+Branch(l::Integer) = Branch(false, l)
+
 struct Return <: Instruction end
 
 struct Func <: Instruction
@@ -76,6 +78,8 @@ Base.show(io::IO, i::Const)    = print(io, i.typ, ".const ", value(i))
 Base.show(io::IO, i::Local)    = print(io, "get_local ", i.id)
 Base.show(io::IO, i::SetLocal) = print(io, i.tee ? "tee_local" : "set_local ", i.id)
 Base.show(io::IO, i::Op)       = print(io, i.typ, ".", i.name)
+Base.show(io::IO, i::Select)   = print(io, "select")
+Base.show(io::IO, i::Branch)   = print(io, i.conditional ? "br_if " : "br ", i.level)
 Base.show(io::IO, i::Return)   = print(io, "return")
 
 printwasm(io, x, level) = show(io, x)
@@ -101,10 +105,16 @@ function printwasm(io, x::Block, level)
   printwasm_(io, x.body, level+1)
 end
 
+function printwasm(io, x::Loop, level)
+  print(io, "loop")
+  printwasm_(io, x.body, level+1)
+end
+
 function Base.show(io::IO, f::Func)
   print(io, "(func")
   foreach(p -> print(io, " (param $p)"), f.params)
   foreach(p -> print(io, " (result $p)"), f.returns)
+  print(io, "\n ")
   foreach(p -> print(io, " (local $p)"), f.locals)
   printwasm_(io, f.body, 1)
   print(io, ")")

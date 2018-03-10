@@ -6,8 +6,9 @@ function walk(x::Expr, inner, outer)
   return outer(y)
 end
 
-postwalk(f, x) = walk(x, x -> postwalk(f, x), f)
-prewalk(f, x)  = walk(f(x), x -> prewalk(f, x), identity)
+prepostwalk(f, g, x) = walk(f(x), x -> prepostwalk(f, g, x), g)
+prewalk(f, x)  = prepostwalk(f, identity, x)
+postwalk(f, x) = prepostwalk(identity, f, x)
 
 exprtype(code::CodeInfo, x) = typeof(x)
 exprtype(code::CodeInfo, x::Expr) = x.typ
@@ -102,9 +103,30 @@ function wasmcalls(c::CodeInfo, code)
   end
 end
 
+iscontrol(ex) = isexpr(ex, :while) || isexpr(ex, :if)
+
+function control(ex)
+  stack = []
+  breaks = []
+  pre = ex -> (iscontrol(ex) && (push!(stack, ex.head); push!(breaks, false)); ex)
+  post = function (ex)
+    iscontrol(ex) && (pop!(stack); pop!(breaks))
+    if isexpr(ex, :continue)
+      label = findfirst(reverse(stack), :while)
+      return Branch(label-1)
+    elseif isexpr(ex, :break)
+      label = findfirst(reverse(stack), :while)
+      breaks[length(stack)+1-label] = true
+      return Branch(label)
+    end
+    ex
+  end
+  prepostwalk(pre, post, ex)
+end
+
 function lower(c::CodeInfo)
   code = wasmcalls(c, inlinessa(c.code))
-  restructure(code)
+  code |> restructure |> control
 end
 
 # Convert to WASM instructions
@@ -122,6 +144,8 @@ function towasm(x, is = Instruction[])
   elseif isexpr(x, :if)
     towasm(x.args[1], is)
     push!(is, If(towasm_(x.args[2].args), towasm_(x.args[3].args)))
+  elseif isexpr(x, :while)
+    push!(is, Block([Loop(towasm_(x.args[2].args))]))
   elseif x isa Number
     push!(is, Const(x))
   elseif x isa LineNumberNode
@@ -133,6 +157,9 @@ end
 
 function code_wasm(ex, A)
   cinfo, R = code_typed(ex, A)[1]
-  body = cinfo |> lower |> towasm
-  Func([WType(T) for T in A.parameters],[WType(R)],[],body)
+  body = towasm_(lower(cinfo).args)
+  Func([WType(T) for T in A.parameters],
+       [WType(R)],
+       [WType(P) for P in cinfo.slottypes[2:end]],
+       body)
 end
