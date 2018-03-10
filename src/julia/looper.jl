@@ -63,7 +63,7 @@ end
 # NOTE: this will break if arbitrary gotos are used.
 function restructure(bs::Associative, entries = 1, loops = [], cond = nothing)
   if isempty(entries)
-    Expr(:block)
+    []
   elseif length(entries) == 1
     l = entries[1]
     if !isempty(loops)
@@ -73,20 +73,19 @@ function restructure(bs::Associative, entries = 1, loops = [], cond = nothing)
     end
     code, cond = splitcondition(bs[l])
     if l ∉ accessible(bs, l, loops)
-      Expr(:block, code..., restructure(bs, branches(bs[l]), loops, cond))
+      [code..., restructure(bs, branches(bs[l]), loops, cond)...]
     else
-      Expr(:block,
-        Expr(:while, true, Expr(:block, code..., restructure(bs, branches(bs[l]), [loops..., l], cond))),
-        restructure(bs, loop_next(bs, l), loops))
+      [Expr(:while, true, Expr(:block, code..., restructure(bs, branches(bs[l]), [loops..., l], cond)...)),
+       restructure(bs, loop_next(bs, l), loops)...]
     end
   elseif length(entries) == 2 && cond != nothing
     as = accessible(bs, entries...)
-    :($cond ?
-      $(restructure(bs, entries[1], loops)) :
-      $(restructure(bs, entries[2], loops)))
+    [Expr(:if, cond,
+      Expr(:block, restructure(bs, entries[1], loops)...),
+      Expr(:block, restructure(bs, entries[2], loops)...))]
   else
     error("Rebuild error")
   end
 end
 
-restructure(code) = restructure(blocks(code))
+restructure(code) = Expr(:block, restructure(blocks(code))...)
