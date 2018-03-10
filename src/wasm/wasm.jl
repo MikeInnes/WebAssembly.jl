@@ -5,6 +5,8 @@ WType(::Type{Int64}) = i64
 WType(::Type{Float32}) = f32
 WType(::Type{Float64}) = f64
 
+WType(::Type{Bool}) = i64
+
 jltype(x::WType) = [Int32, Int64, Float32, Float64][Int(x)+1]
 
 abstract type Instruction end
@@ -30,10 +32,12 @@ struct SetLocal <: Instruction
   id::Int
 end
 
-struct BinaryOp <: Instruction
+struct Op <: Instruction
   typ::WType
   name::Symbol
 end
+
+struct Select <: Instruction end
 
 struct If <: Instruction
   t::Vector{Instruction}
@@ -64,16 +68,17 @@ end
 
 # Printing
 
-Base.show(io::IO, i::Const) =  print(io, "(", i.typ, ".const ", value(i), ")")
-Base.show(io::IO, i::Local) =  print(io, "(get_local ", i.id, ")")
-Base.show(io::IO, i::BinaryOp) = print(io, "(", i.typ, ".", i.name, ")")
-Base.show(io::IO, i::Return) =  print(io, "(return)")
+Base.show(io::IO, i::Const)    = print(io, i.typ, ".const ", value(i))
+Base.show(io::IO, i::Local)    = print(io, "get_local ", i.id)
+Base.show(io::IO, i::SetLocal) = print(io, i.tee ? "tee_local" : "set_local ", i.id)
+Base.show(io::IO, i::Op)       = print(io, i.typ, ".", i.name)
+Base.show(io::IO, i::Return)   = print(io, "return")
 
 function Base.show(io::IO, f::Func)
   print(io, "(func")
   foreach(p -> print(io, " (param $p)"), f.params)
   foreach(p -> print(io, " (result $p)"), f.returns)
   foreach(p -> print(io, " (local $p)"), f.locals)
-  foreach(i -> print(io, "\n  $i"), f.body)
+  foreach(i -> print(io, "\n  ($i)"), f.body)
   print(io, ")")
 end

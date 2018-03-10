@@ -53,15 +53,34 @@ end
 
 wasmfuncs = Dict()
 
-wasmfuncs[GlobalRef(Base, :add_int)] = function (A,B)
-  @assert A == B
-  BinaryOp(WType(A), :add)
+binary_ops = [
+  (:add_int, :add),
+  (:sub_int, :sub),
+  (:(===), :eq),
+  (:slt_int, :lt_s),
+  (:sle_int, :le_s)]
+
+for (j, w) in binary_ops
+  wasmfuncs[GlobalRef(Base, j)] = function (A,B)
+    @assert A == B
+    Op(WType(A), w)
+  end
+end
+
+wasmfuncs[GlobalRef(Base, :not_int)] = function (A)
+  Op(WType(A), :eqz)
+end
+
+wasmfuncs[GlobalRef(Base, :select_value)] = function (c, t, f)
+  Select()
 end
 
 wasmfunc(f, xs...) = wasmfuncs[f](xs...)
 
 isprimitive(x) = false
-isprimitive(x::GlobalRef) = getfield(x.mod, x.name) isa Core.IntrinsicFunction
+isprimitive(x::GlobalRef) =
+  getfield(x.mod, x.name) isa Core.IntrinsicFunction ||
+  getfield(x.mod, x.name) isa Core.Builtin
 
 function wasmcalls(c::CodeInfo, code)
   map(code) do x
@@ -72,12 +91,10 @@ function wasmcalls(c::CodeInfo, code)
              x.args[2:end]...)
       elseif isexpr(x, :(=)) && x.args[1] isa SlotNumber
         Expr(:call, SetLocal(false, x.args[1].id-1), x.args[2])
-      elseif x isa Real
-        Const(x)
       elseif x isa SlotNumber
         Local(x.id-2)
       elseif isexpr(x, :return)
-        :($(x.args[1]); $(Return()))
+        Expr(:call, Return(), x.args[1])
       else
         x
       end
@@ -85,47 +102,29 @@ function wasmcalls(c::CodeInfo, code)
   end
 end
 
-function stackify(code, ex)
-  if isexpr(ex, :return)
-    stackify(code, ex.args[1])
-    push!(code, :(return))
-  elseif isexpr(ex, :gotoifnot)
-    stackify(code, ex.args[1])
-    push!(code, Expr(:gotoifnot, :(↑), ex.args[2]))
-  elseif isexpr(ex, :call)
-    foreach(a -> stackify(code, a), ex.args[2:end])
-    push!(code, ex.args[1])
-  elseif isexpr(ex, :block)
-    foreach(x -> stackify(code, x), ex.args)
-  else
-    push!(code, ex)
-  end
-end
-
-function stackify(code)
-  code′ = []
-  for c in code
-    stackify(code′, c)
-  end
-  return code′
-end
-
 function lower(c::CodeInfo)
   code = wasmcalls(c, inlinessa(c.code))
-  code |> stackify |> restructure
+  restructure(code)
 end
 
 # Convert to WASM instructions
 
-function towasm(ex, is = Instruction[])
+function towasm(ex, is = Instruction[], loop = [0,false,false])
   @assert isexpr(ex, :block)
   for x in ex.args
     if x isa Instruction
       push!(is, x)
     elseif isexpr(x, :block)
       towasm(x, is)
+    elseif isexpr(x, :call) && x.args[1] isa Instruction
+      towasm(Expr(:block, x.args[2:end]...), is)
+      push!(is, x.args[1])
+    elseif x isa Number
+      push!(is, Const(x))
+    elseif x isa LineNumberNode
+      continue
     else
-      error("Can't convert $x to wasm")
+      error("Can't convert to wasm: $x")
     end
   end
   return is
