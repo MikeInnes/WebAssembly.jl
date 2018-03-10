@@ -98,6 +98,12 @@ function lowercalls(c::CodeInfo, code)
         Expr(:call, SetLocal(false, x.args[1].id-2), x.args[2])
       elseif x isa SlotNumber
         Local(x.id-2)
+      elseif isexpr(x, :gotoifnot)
+        Expr(:call, Goto(true, x.args[2]), x.args[1])
+      elseif x isa GotoNode
+        Goto(false, x.label)
+      elseif x isa LabelNode
+        Label(x.label)
       elseif isexpr(x, :return)
         Expr(:call, Return(), x.args[1])
       else
@@ -109,29 +115,7 @@ end
 
 iscontrol(ex) = isexpr(ex, :while) || isexpr(ex, :if)
 
-function control(ex)
-  stack = []
-  breaks = []
-  pre = ex -> (iscontrol(ex) && (push!(stack, ex.head); push!(breaks, false)); ex)
-  post = function (ex)
-    iscontrol(ex) && (pop!(stack); pop!(breaks))
-    if isexpr(ex, :continue)
-      label = findfirst(reverse(stack), :while)
-      return Branch(label-1)
-    elseif isexpr(ex, :break)
-      label = findfirst(reverse(stack), :while)
-      breaks[length(stack)+1-label] = true
-      return Branch(label)
-    end
-    ex
-  end
-  prepostwalk(pre, post, ex)
-end
-
-function lower(c::CodeInfo)
-  code = lowercalls(c, inlinessa(c.code))
-  code |> restructure |> control
-end
+lower(c::CodeInfo) = lowercalls(c, inlinessa(c.code))
 
 # Convert to WASM instructions
 
@@ -161,7 +145,7 @@ end
 
 function code_wasm(ex, A)
   cinfo, R = code_typed(ex, A)[1]
-  body = towasm_(lower(cinfo).args)
+  body = towasm_(lower(cinfo))
   Func([WType(T) for T in A.parameters],
        [WType(R)],
        [WType(P) for P in cinfo.slottypes[2:end]],
