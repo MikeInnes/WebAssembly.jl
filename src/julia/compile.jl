@@ -91,7 +91,7 @@ function wasmcalls(c::CodeInfo, code)
              wasmfunc(x.args[1], exprtype.(c, x.args[2:end])...),
              x.args[2:end]...)
       elseif isexpr(x, :(=)) && x.args[1] isa SlotNumber
-        Expr(:call, SetLocal(false, x.args[1].id-1), x.args[2])
+        Expr(:call, SetLocal(false, x.args[1].id-2), x.args[2])
       elseif x isa SlotNumber
         Local(x.id-2)
       elseif isexpr(x, :return)
