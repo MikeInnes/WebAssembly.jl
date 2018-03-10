@@ -2,7 +2,9 @@ maxlabel(code) = maximum(l isa LabelNode ? l.label : -1 for l in code)
 
 isgoto(::GotoNode) = true
 isgoto(x) = isexpr(x, :gotoifnot)
-isjump(x) = isgoto(x) || isexpr(x, :return)
+isjump(x) =
+  isgoto(x) || isexpr(x, :return) ||
+  (isexpr(x, :call) && x.args[1] == Return())
 
 function blocks(code)
   l = maxlabel(code)
