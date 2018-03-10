@@ -72,24 +72,28 @@ wasmfuncs[GlobalRef(Base, :not_int)] = function (A)
   Op(WType(A), :eqz)
 end
 
-wasmfuncs[GlobalRef(Base, :select_value)] = function (c, t, f)
-  Select()
+wasmfunc(f, xs...) = wasmfuncs[f](xs...)
+
+wasmcalls = Dict()
+
+wasmcalls[GlobalRef(Base, :select_value)] = function (i, c, a, b)
+  return Expr(:call, Select(), a, b, c)
 end
 
-wasmfunc(f, xs...) = wasmfuncs[f](xs...)
+wasmcall(i, f, xs...) =
+  haskey(wasmcalls, f) ? wasmcalls[f](i, xs...) :
+  Expr(:call, wasmfunc(f, exprtype.(i, xs)...), xs...)
 
 isprimitive(x) = false
 isprimitive(x::GlobalRef) =
   getfield(x.mod, x.name) isa Core.IntrinsicFunction ||
   getfield(x.mod, x.name) isa Core.Builtin
 
-function wasmcalls(c::CodeInfo, code)
+function lowercalls(c::CodeInfo, code)
   map(code) do x
     prewalk(x) do x
       if (isexpr(x, :call) && isprimitive(x.args[1]))
-        Expr(:call,
-             wasmfunc(x.args[1], exprtype.(c, x.args[2:end])...),
-             x.args[2:end]...)
+        wasmcall(c, x.args...)
       elseif isexpr(x, :(=)) && x.args[1] isa SlotNumber
         Expr(:call, SetLocal(false, x.args[1].id-2), x.args[2])
       elseif x isa SlotNumber
@@ -125,7 +129,7 @@ function control(ex)
 end
 
 function lower(c::CodeInfo)
-  code = wasmcalls(c, inlinessa(c.code))
+  code = lowercalls(c, inlinessa(c.code))
   code |> restructure |> control
 end
 
