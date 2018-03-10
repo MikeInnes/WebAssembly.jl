@@ -74,11 +74,31 @@ Base.show(io::IO, i::SetLocal) = print(io, i.tee ? "tee_local" : "set_local ", i
 Base.show(io::IO, i::Op)       = print(io, i.typ, ".", i.name)
 Base.show(io::IO, i::Return)   = print(io, "return")
 
+printwasm(io, x, level) = show(io, x)
+
+function printwasm_(io, xs, level)
+  for x in xs
+    print(io, "\n", "  "^(level))
+    print(io, "(")
+    printwasm(io, x, level)
+    print(io, ")")
+  end
+end
+
+function printwasm(io, x::If, level)
+  print(io, "if")
+  printwasm_(io, x.t, level+1)
+  print(io, "\n", "  "^level, " else")
+  printwasm_(io, x.f, level+1)
+end
+
+Base.show(io::IO, x::If) = printwasm(io, x)
+
 function Base.show(io::IO, f::Func)
   print(io, "(func")
   foreach(p -> print(io, " (param $p)"), f.params)
   foreach(p -> print(io, " (result $p)"), f.returns)
   foreach(p -> print(io, " (local $p)"), f.locals)
-  foreach(i -> print(io, "\n  ($i)"), f.body)
+  printwasm_(io, f.body, 1)
   print(io, ")")
 end
