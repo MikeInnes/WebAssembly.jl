@@ -94,10 +94,13 @@ function printwasm_(io, xs, level)
 end
 
 function printwasm(io, x::If, level)
-  print(io, "if")
+  level += 1
+  println(io, "if")
+  print(io, "  "^level, "(then")
   printwasm_(io, x.t, level+1)
-  print(io, "\n", "  "^level, " else")
+  print(io, ")\n", "  "^level, "(else")
   printwasm_(io, x.f, level+1)
+  print(io, ")")
 end
 
 function printwasm(io, x::Block, level)
