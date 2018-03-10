@@ -67,9 +67,9 @@ function restructure(bs::Associative, entries = 1, loops = [], cond = nothing)
   elseif length(entries) == 1
     l = entries[1]
     if !isempty(loops)
-      l == loops[end] && return :(continue)
-      l in loops && return :(break)
-      l == loop_next(bs, loops[end]) && return :(break)
+      l == loops[end] && return [:(continue)]
+      l in loops && return [:(break)]
+      l == loop_next(bs, loops[end]) && return [:(break)]
     end
     code, cond = splitcondition(bs[l])
     if l ∉ accessible(bs, l, loops)
