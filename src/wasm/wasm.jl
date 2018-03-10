@@ -5,7 +5,7 @@ WType(::Type{Int64}) = i64
 WType(::Type{Float32}) = f32
 WType(::Type{Float64}) = f64
 
-WType(::Type{Bool}) = i64
+WType(::Type{Bool}) = i32
 
 jltype(x::WType) = [Int32, Int64, Float32, Float64][Int(x)+1]
 
