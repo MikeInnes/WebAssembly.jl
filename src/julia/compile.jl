@@ -109,23 +109,22 @@ end
 
 # Convert to WASM instructions
 
-function towasm(ex, is = Instruction[], loop = [0,false,false])
-  @assert isexpr(ex, :block)
-  for x in ex.args
-    if x isa Instruction
-      push!(is, x)
-    elseif isexpr(x, :block)
-      towasm(x, is)
-    elseif isexpr(x, :call) && x.args[1] isa Instruction
-      towasm(Expr(:block, x.args[2:end]...), is)
-      push!(is, x.args[1])
-    elseif x isa Number
-      push!(is, Const(x))
-    elseif x isa LineNumberNode
-      continue
-    else
-      error("Can't convert to wasm: $x")
-    end
+function towasm(x, is = Instruction[])
+  if x isa Instruction
+    push!(is, x)
+  elseif isexpr(x, :block)
+    foreach(x -> towasm(x, is), x.args)
+  elseif isexpr(x, :call) && x.args[1] isa Instruction
+    foreach(x -> towasm(x, is), x.args[2:end])
+    push!(is, x.args[1])
+  elseif isexpr(x, :if)
+    towasm(x.args[1], is)
+    push!(is, If(towasm(x.args[1]), towasm(x.args[2])))
+  elseif x isa Number
+    push!(is, Const(x))
+  elseif x isa LineNumberNode
+  else
+    error("Can't convert to wasm: $x")
   end
   return is
 end
