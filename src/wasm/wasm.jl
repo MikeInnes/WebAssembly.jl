@@ -39,6 +39,10 @@ end
 
 struct Select <: Instruction end
 
+struct Block <: Instruction
+  body::Vector{Instruction}
+end
+
 struct If <: Instruction
   t::Vector{Instruction}
   f::Vector{Instruction}
@@ -92,7 +96,10 @@ function printwasm(io, x::If, level)
   printwasm_(io, x.f, level+1)
 end
 
-Base.show(io::IO, x::If) = printwasm(io, x)
+function printwasm(io, x::Block, level)
+  print(io, "block")
+  printwasm_(io, x.body, level+1)
+end
 
 function Base.show(io::IO, f::Func)
   print(io, "(func")

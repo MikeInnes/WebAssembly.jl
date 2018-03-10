@@ -113,13 +113,13 @@ function towasm(x, is = Instruction[])
   if x isa Instruction
     push!(is, x)
   elseif isexpr(x, :block)
-    foreach(x -> towasm(x, is), x.args)
+    push!(is, Block(vcat(towasm.(x.args)...)))
   elseif isexpr(x, :call) && x.args[1] isa Instruction
     foreach(x -> towasm(x, is), x.args[2:end])
     push!(is, x.args[1])
   elseif isexpr(x, :if)
     towasm(x.args[1], is)
-    push!(is, If(towasm(x.args[1]), towasm(x.args[2])))
+    push!(is, If(towasm(x.args[2]), towasm(x.args[3])))
   elseif x isa Number
     push!(is, Const(x))
   elseif x isa LineNumberNode
