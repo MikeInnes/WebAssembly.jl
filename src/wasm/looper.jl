@@ -27,6 +27,12 @@ function striplabels(is)
   return js
 end
 
+function alignlabel(j, ls)
+  from, to = j
+  from < to && (from = ls[findlast(l -> l <= from, ls)])
+  from=>to
+end
+
 # All jumps as pairs source_line => target_line
 function jumps(is)
   js = Pair{Int,Int}[]
@@ -34,7 +40,8 @@ function jumps(is)
     x isa Goto || continue
     push!(js, i => x.label)
   end
-  return js
+  labels = sort(unique([1, map(x -> x.second, js)...]))
+  return [alignlabel(j, labels) for j in js]
 end
 
 isforw(j) = j.first < j.second
