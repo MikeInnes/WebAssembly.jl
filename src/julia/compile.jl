@@ -1,3 +1,8 @@
+module Compile
+
+using Base.Meta
+using WebAssembly: WType, Instruction, Const, Local, SetLocal, Select, Op, Label, Goto, Return
+
 walk(x, inner, outer) = outer(x)
 
 function walk(x::Expr, inner, outer)
@@ -144,11 +149,4 @@ function towasm(x, is = Instruction[])
   return is
 end
 
-function code_wasm(ex, A)
-  cinfo, R = code_typed(ex, A)[1]
-  body = towasm_(lower(cinfo)) |> restructure
-  Func([WType(T) for T in A.parameters],
-       [WType(R)],
-       [WType(P) for P in cinfo.slottypes[length(A.parameters)+2:end]],
-       body)
 end

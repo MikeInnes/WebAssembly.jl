@@ -8,7 +8,7 @@ struct Goto <: Instruction
 end
 
 Base.show(io::IO, i::Label) = print(io, "label \$", i.label)
-Base.show(io::IO, i::Goto) = print(io, i.ifnot ? "gotounless \$" : "goto \$", i.label)
+Base.show(io::IO, i::Goto) = print(io, i.cond ? "gotounless \$" : "goto \$", i.label)
 
 # Instead of arbitrary labels, jump to line numbers.
 function striplabels(is)
@@ -22,7 +22,7 @@ function striplabels(is)
     end
   end
   for (i, x) in enumerate(js)
-    x isa Goto && (js[i] = Goto(x.ifnot, ls[x.label]))
+    x isa Goto && (js[i] = Goto(x.cond, ls[x.label]))
   end
   return js
 end
