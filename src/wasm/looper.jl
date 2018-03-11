@@ -89,8 +89,8 @@ end
 
 insertjumps(is, js) = reduce(insertjump, is, reverse(js))
 
-function restructure(is)
-  is = striplabels(is)
+function restructure(b::Block)
+  is = striplabels(b.body)
   js = is |> jumps |> resolve!
-  insertjumps(is, js)
+  insertjumps(is, js) |> Block |> nops
 end

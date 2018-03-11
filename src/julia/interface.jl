@@ -2,7 +2,7 @@ using Base.Meta
 
 function code_wasm(ex, A)
   cinfo, R = code_typed(ex, A)[1]
-  body = Compile.towasm_(Compile.lower(cinfo)) |> restructure
+  body = Compile.towasm_(Compile.lower(cinfo)) |> Block |> restructure
   Func([WType(T) for T in A.parameters],
        [WType(R)],
        [WType(P) for P in cinfo.slottypes[length(A.parameters)+2:end]],

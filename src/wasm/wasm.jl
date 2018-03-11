@@ -65,14 +65,14 @@ Branch(l::Integer) = Branch(false, l)
 
 struct Return <: Instruction end
 
-struct Func <: Instruction
+struct Func
   params::Vector{WType}
   returns::Vector{WType}
   locals::Vector{WType}
-  body::Vector{Instruction}
+  body::Block
 end
 
-struct Module <: Instruction
+struct Module
   funcs::Vector{Func}
 end
 
@@ -128,6 +128,6 @@ function Base.show(io::IO, f::Func)
     print(io, "\n ")
     foreach(p -> print(io, " (local $p)"), f.locals)
   end
-  printwasm_(io, f.body, 1)
+  printwasm_(io, f.body.body, 1)
   print(io, ")")
 end
