@@ -99,7 +99,8 @@ function lowercalls(c::CodeInfo, code)
       elseif x isa SlotNumber
         Local(x.id-2)
       elseif isexpr(x, :gotoifnot)
-        Expr(:call, Goto(true, x.args[2]), x.args[1])
+        Expr(:call, Goto(true, x.args[2]),
+             Expr(:call, GlobalRef(Base, :not_int), x.args[1]))
       elseif x isa GotoNode
         Goto(false, x.label)
       elseif x isa LabelNode
@@ -145,9 +146,9 @@ end
 
 function code_wasm(ex, A)
   cinfo, R = code_typed(ex, A)[1]
-  body = towasm_(lower(cinfo))
+  body = towasm_(lower(cinfo)) |> restructure
   Func([WType(T) for T in A.parameters],
        [WType(R)],
-       [WType(P) for P in cinfo.slottypes[2:end]],
+       [WType(P) for P in cinfo.slottypes[length(A.parameters)+2:end]],
        body)
 end

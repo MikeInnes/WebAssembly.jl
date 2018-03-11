@@ -23,6 +23,10 @@ value(x::Const) = value(x, jltype(x.typ))
 value(x::Const, T::Union{Type{Float64},Type{Int64}}) = reinterpret(T, x.val)
 value(x::Const, T::Union{Type{Float32},Type{Int32}}) = T(value(x, widen(T)))
 
+struct Nop <: Instruction end
+
+const nop = Nop()
+
 struct Local <: Instruction
   id::Int
 end
@@ -53,7 +57,7 @@ struct Loop <: Instruction
 end
 
 struct Branch <: Instruction
-  conditional::Bool
+  cond::Bool
   level::Int
 end
 
@@ -74,12 +78,13 @@ end
 
 # Printing
 
+Base.show(io::IO, i::Nop)      = print(io, "nop")
 Base.show(io::IO, i::Const)    = print(io, i.typ, ".const ", value(i))
 Base.show(io::IO, i::Local)    = print(io, "get_local ", i.id)
 Base.show(io::IO, i::SetLocal) = print(io, i.tee ? "tee_local" : "set_local ", i.id)
 Base.show(io::IO, i::Op)       = print(io, i.typ, ".", i.name)
 Base.show(io::IO, i::Select)   = print(io, "select")
-Base.show(io::IO, i::Branch)   = print(io, i.conditional ? "br_if " : "br ", i.level)
+Base.show(io::IO, i::Branch)   = print(io, i.cond ? "br_if " : "br ", i.level)
 Base.show(io::IO, i::Return)   = print(io, "return")
 
 printwasm(io, x, level) = show(io, x)
@@ -113,12 +118,16 @@ function printwasm(io, x::Loop, level)
   printwasm_(io, x.body, level+1)
 end
 
+Base.show(io::IO, i::Union{Block,Loop,If}) = printwasm(io, i, 0)
+
 function Base.show(io::IO, f::Func)
   print(io, "(func")
   foreach(p -> print(io, " (param $p)"), f.params)
   foreach(p -> print(io, " (result $p)"), f.returns)
-  print(io, "\n ")
-  foreach(p -> print(io, " (local $p)"), f.locals)
+  if !isempty(f.locals)
+    print(io, "\n ")
+    foreach(p -> print(io, " (local $p)"), f.locals)
+  end
   printwasm_(io, f.body, 1)
   print(io, ")")
 end

@@ -3,21 +3,22 @@ struct Label <: Instruction
 end
 
 struct Goto <: Instruction
-  ifnot::Bool
+  cond::Bool
   label::Int
 end
 
 Base.show(io::IO, i::Label) = print(io, "label \$", i.label)
 Base.show(io::IO, i::Goto) = print(io, i.ifnot ? "gotounless \$" : "goto \$", i.label)
 
+# Instead of arbitrary labels, jump to line numbers.
 function striplabels(is)
   ls = Dict{Int,Int}()
   js = []
-  for (i, x) in enumerate(is)
-    if x isa Label
-      ls[x.label] = i
+  for i in is
+    if i isa Label
+      ls[i.label] = length(js)+1
     else
-      push!(js, x)
+      push!(js, i)
     end
   end
   for (i, x) in enumerate(js)
@@ -26,6 +27,7 @@ function striplabels(is)
   return js
 end
 
+# All jumps as pairs source_line => target_line
 function jumps(is)
   js = Pair{Int,Int}[]
   for (i, x) in enumerate(is)
@@ -36,14 +38,13 @@ function jumps(is)
 end
 
 isforw(j) = j.first < j.second
+jrange(j) = isforw(j) ? (j.first:j.second-1) : (j.second:j.first)
 
 contain(j, i::Integer) = minimum(j) <= i <= maximum(j)
 contain(j1, j2) = contain(j1, j2.first) && contain(j1, j2.second)
 
-jlength(j) = abs(j.first-j.second)
-
 intersects(j1, j2) =
-  jlength(j1) < jlength(j2) ? intersects(j2, j1) :
+  length(jrange(j1)) < length(jrange(j2)) ? intersects(j2, j1) :
   contain(j1, j2.first) != contain(j1, j2.second)
 
 order(j1, j2) = maximum(j1) > maximum(j2) ? (true, (j2, j1)) : (false, (j1, j2))
@@ -66,5 +67,30 @@ function resolve!(jumps)
     jumps[i], jumps[j] = switch ? (j2, j1) : (j1, j2)
   end
   checkintersect(jumps)
-  return jumps
+  return sort!(jumps, lt = contain)
+end
+
+splice(is, r, js) = [is[1:r.start-1]..., js..., is[r.stop+1:end]...]
+
+branches(x, label, level) = x
+
+branches(x::Goto, label, level) =
+  x.label == label ? Branch(x.cond, level) : x
+
+branches(x::Block, label, level) = Block(branches.(x.body, label, level+1))
+branches(x::Loop, label, level)  = Loop(branches.(x.body, label, level+1))
+
+function insertjump(is, j)
+  body = is[jrange(j)]
+  body = branches.(body, j.second, 0)
+  body = isforw(j) ? Block(body) : Block([Loop([body..., Branch(1)])])
+  splice(is, jrange(j), [body, [nop for _ = 1:length(jrange(j))-1]...])
+end
+
+insertjumps(is, js) = reduce(insertjump, is, reverse(js))
+
+function restructure(is)
+  is = striplabels(is)
+  js = is |> jumps |> resolve!
+  insertjumps(is, js)
 end
