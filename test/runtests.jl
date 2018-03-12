@@ -1,5 +1,10 @@
 using WebAssembly
+using WebAssembly.Instructions
 using Base.Test
 
-# write your own tests here
-@test 1 == 2
+@testset "WebAssembly" begin
+
+b = Block([Nop(), Nop()]) |> WebAssembly.nops
+@test isempty(b.body)
+
+end
