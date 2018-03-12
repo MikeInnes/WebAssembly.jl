@@ -7,6 +7,8 @@ struct Goto <: Instruction
   label::Int
 end
 
+Goto(label::Integer) = Goto(false, label)
+
 Base.show(io::IO, i::Label) = print(io, "label \$", i.label)
 Base.show(io::IO, i::Goto) = print(io, i.cond ? "gotounless \$" : "goto \$", i.label)
 
