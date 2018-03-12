@@ -101,5 +101,5 @@ insertjumps(is, js) = reduce(insertjump, is, reverse(js))
 function restructure(b::Block)
   is = striplabels(b.body)
   js = is |> jumps |> resolve!
-  insertjumps(is, js) |> Block |> nops
+  insertjumps(is, js) |> Block |> nops |> deadcode
 end
