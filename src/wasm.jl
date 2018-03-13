@@ -74,9 +74,9 @@ Branch(l::Integer) = Branch(false, l)
 
 struct Return <: Instruction end
 
-struct Trap <: Instruction end
+struct Unreachable <: Instruction end
 
-const trap = Trap()
+const unreachable = Unreachable()
 
 struct Func
   params::Vector{WType}
@@ -96,9 +96,11 @@ Base.show(io::IO, i::Const)    = print(io, i.typ, ".const ", value(i))
 Base.show(io::IO, i::Local)    = print(io, "get_local ", i.id)
 Base.show(io::IO, i::SetLocal) = print(io, i.tee ? "tee_local" : "set_local ", i.id)
 Base.show(io::IO, i::Op)       = print(io, i.typ, ".", i.name)
+Base.show(io::IO, i::Convert)  = print(io, i.to, ".", i.name, "/", i.from)
 Base.show(io::IO, i::Select)   = print(io, "select")
 Base.show(io::IO, i::Branch)   = print(io, i.cond ? "br_if " : "br ", i.level)
 Base.show(io::IO, i::Return)   = print(io, "return")
+Base.show(io::IO, i::Unreachable) = print(io, "unreachable")
 
 printwasm(io, x, level) = show(io, x)
 
