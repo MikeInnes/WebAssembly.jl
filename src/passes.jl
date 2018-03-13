@@ -23,6 +23,19 @@ function deadcode(x)
   end
 end
 
+# recover ifs
+
+function makeifs(code)
+  prewalk(code) do x
+    x isa Block || return x
+    i = findfirst(x -> x isa Branch, x.body)
+    i != 0 && x.body[i].cond || return x
+    cond = x.body[1:i-1]
+    cond[end] == Op(i32, :eqz) ? pop!(cond) : push!(cond, Op(i32, :eqz))
+    return Block([cond..., If(x.body[i+1:end], [])])
+  end
+end
+
 # remove unused blocks
 # TODO: collapse blocks with the same head
 
