@@ -69,3 +69,5 @@ function rmblocks(code)
     end
   end
 end
+
+optimise(b) = b |> deadcode |> makeifs |> rmblocks
