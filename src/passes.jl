@@ -22,3 +22,28 @@ function deadcode(x)
     end
   end
 end
+
+# remove unused blocks
+# TODO: collapse blocks with the same head
+
+branches_to(b, l) = false
+branches_to(b::Branch, l) = b.level == l
+
+branches_to(b::Union{Block,Loop}, l) = any(x -> branches_to(x, l+1), b.body)
+
+branches_to(b::If, l) =
+  any(x -> branches_to(x, l+1), b.t) || any(x -> branches_to(x, l+1), b.f)
+
+isredundant(b::Block) = !branches_to(b, -1)
+
+function rmblocks(code)
+  prewalk(code) do x
+    applyblock(x) do is
+      is′ = []
+      for i in is
+        i isa Block && isredundant(i) ? append!(is′, i.body) : push!(is′, i)
+      end
+      is′
+    end
+  end
+end
