@@ -5,7 +5,8 @@ WType(::Type{Int64}) = i64
 WType(::Type{Float32}) = f32
 WType(::Type{Float64}) = f64
 
-WType(::Type{Bool}) = i32
+WType(::Type{<:Union{Bool,UInt32}}) = i32
+WType(::Type{UInt64}) = i64
 
 jltype(x::WType) = [Int32, Int64, Float32, Float64][Int(x)+1]
 
@@ -16,8 +17,10 @@ struct Const <: Instruction
   val::UInt64
 end
 
+Const(x::Union{UInt32,UInt64})   = Const(WType(typeof(x)), UInt64(x))
 Const(x::Union{Int64,Int32})     = Const(WType(typeof(x)), reinterpret(UInt64, Int64(x)))
 Const(x::Union{Float64,Float32}) = Const(WType(typeof(x)), reinterpret(UInt64, Float64(x)))
+Const(x::Bool) = Const(Int32(x))
 
 value(x::Const) = value(x, jltype(x.typ))
 value(x::Const, T::Union{Type{Float64},Type{Int64}}) = reinterpret(T, x.val)
@@ -43,6 +46,12 @@ end
 
 struct Select <: Instruction end
 
+struct Convert <: Instruction
+  to::WType
+  from::WType
+  name::Symbol
+end
+
 struct Block <: Instruction
   body::Vector{Instruction}
 end
@@ -64,6 +73,10 @@ end
 Branch(l::Integer) = Branch(false, l)
 
 struct Return <: Instruction end
+
+struct Trap <: Instruction end
+
+const trap = Trap()
 
 struct Func
   params::Vector{WType}

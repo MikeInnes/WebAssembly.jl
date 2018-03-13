@@ -2,8 +2,7 @@ applyblock(f, x::Union{Block,Loop}) = typeof(x)(f(x.body))
 applyblock(f, x::If) = If(f(x.t), f(x.f))
 applyblock(f, x) = x
 
-walk(x, inner, outer) = outer(x)
-walk(x::Union{Block,Loop,If}, inner, outer) = outer(applyblock(xs -> map(inner, xs), x))
+walk(x, inner, outer) = outer(applyblock(xs -> map(inner, xs), x))
 
 postwalk(f, x) = walk(x, x -> postwalk(f, x), f)
 prewalk(f, x)  = walk(f(x), x -> prewalk(f, x), identity)
@@ -39,22 +38,32 @@ end
 # remove unused blocks
 # TODO: collapse blocks with the same head
 
-branches_to(b, l) = false
-branches_to(b::Branch, l) = b.level == l
+mapbranches(f, b, level = -1) = applyblock(is -> mapbranches.(f, is, level+1), b)
+mapbranches(f, b::Branch, level = -1) = f(b, level)
 
-branches_to(b::Union{Block,Loop}, l) = any(x -> branches_to(x, l+1), b.body)
+function branches_to(b)
+  result = false
+  mapbranches(b) do b, l
+    b.level==l && (result = true)
+    b
+  end
+  return result
+end
 
-branches_to(b::If, l) =
-  any(x -> branches_to(x, l+1), b.t) || any(x -> branches_to(x, l+1), b.f)
-
-isredundant(b::Block) = !branches_to(b, -1)
+function decbranches(i)
+  mapbranches(i) do b, l
+    b.level > l ? Branch(b.cond, b.level-1) : b
+  end
+end
 
 function rmblocks(code)
   prewalk(code) do x
     applyblock(x) do is
       is′ = []
       for i in is
-        i isa Block && isredundant(i) ? append!(is′, i.body) : push!(is′, i)
+        i isa Block && !branches_to(i) ?
+          append!(is′, decbranches(i).body) :
+          push!(is′, i)
       end
       is′
     end
