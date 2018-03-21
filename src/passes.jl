@@ -31,7 +31,12 @@ function makeifs(code)
     i != 0 && x.body[i].cond || return x
     cond = x.body[1:i-1]
     cond[end] == Op(i32, :eqz) ? pop!(cond) : push!(cond, Op(i32, :eqz))
-    return Block([cond..., If(x.body[i+1:end], [])])
+    for j in i+1:length(x.body)
+      if x.body[j] isa Branch 
+        x.body[j] = Branch(x.body[j].cond, x.body[j].level + 1)
+      end
+    end
+    return Block([cond..., If(x.body[i+1:end], [Branch(false, x.body[i].level + 1)])])
   end
 end
 
