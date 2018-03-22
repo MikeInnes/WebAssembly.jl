@@ -3,10 +3,14 @@ using WebAssembly.Instructions
 using WebAssembly: WType, Func, Module, FuncType, Func, Table, Mem, Global, Elem, Data, Import, Export, i32, f64
 using Base.Test
 
+using Charlotte
+
 @testset "WebAssembly" begin
 
 b = Block([Nop(), Nop()]) |> WebAssembly.nops
 @test isempty(b.body)
+
+include("interpret.jl")
 
 end
 

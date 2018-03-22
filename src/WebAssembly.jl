@@ -14,6 +14,7 @@ include("passes.jl")
 include("looper.jl")
 include("io.jl")
 include("parser.jl")
+include("interpret.jl")
 
 module Instructions
 
