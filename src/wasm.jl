@@ -1,4 +1,4 @@
-@enum WType i32 i64 f32 f64
+@enum WType i32=0x7f i64=0x7e f32=0x7d f64=0x7c
 
 WType(::Type{Int32}) = i32
 WType(::Type{Int64}) = i64
@@ -8,13 +8,16 @@ WType(::Type{Float64}) = f64
 WType(::Type{<:Union{Bool,UInt32}}) = i32
 WType(::Type{UInt64}) = i64
 
-jltype(x::WType) = [Int32, Int64, Float32, Float64][Int(x)+1]
+jltype(x::WType) = [Int32, Int64, Float32, Float64][128-Int(x)]
 
 abstract type Instruction end
 
 struct Const <: Instruction
   typ::WType
   val::UInt64
+  opcode::UInt8
+
+  Const(typ,val) = new(typ,val,opcodes["$(typ).const"])
 end
 
 Const(x::Union{UInt32,UInt64})   = Const(WType(typeof(x)), UInt64(x))
@@ -26,55 +29,95 @@ value(x::Const) = value(x, jltype(x.typ))
 value(x::Const, T::Union{Type{Float64},Type{Int64}}) = reinterpret(T, x.val)
 value(x::Const, T::Union{Type{Float32},Type{Int32}}) = T(value(x, widen(T)))
 
-struct Nop <: Instruction end
+struct Nop <: Instruction 
+  opcode::UInt8
+
+  Nop() = new(opcodes["nop"])
+end
 
 const nop = Nop()
 
 struct Local <: Instruction
   id::Int
+  opcode::UInt8
+
+  Local(id) = new(id,opcodes["get_local"])
 end
 
 struct SetLocal <: Instruction
   tee::Bool
   id::Int
+  opcode::UInt8
+
+  SetLocal(tee,id) = new(tee,id,tee ? opcodes["tee_local"] : opcodes["set_local"])
 end
 
 struct Op <: Instruction
   typ::WType
   name::Symbol
+  opcode::UInt8
+
+  Op(typ,name) = new(typ,name,opcodes["$(typ).$(name)"])
 end
 
-struct Select <: Instruction end
+struct Select <: Instruction 
+  opcode::UInt8
+
+  Select() = new(opcodes["select"])
+end
 
 struct Convert <: Instruction
   to::WType
   from::WType
   name::Symbol
+  opcode::UInt8
+
+  Convert(to,from,name) = new(to,from,name,opcodes["$(to).$(name)/$(from)"])
 end
 
 struct Block <: Instruction
   body::Vector{Instruction}
+  opcode::UInt8
+
+  Block(body) = new(body,opcodes["block"])
 end
 
 struct If <: Instruction
   t::Vector{Instruction}
   f::Vector{Instruction}
+  opcode::UInt8
+
+  If(t,f) = new(t,f,opcodes["if"])
 end
 
 struct Loop <: Instruction
   body::Vector{Instruction}
+  opcode::UInt8
+
+  Loop(body) = new(body,opcodes["loop"]) 
 end
 
 struct Branch <: Instruction
   cond::Bool
   level::Int
+  opcode::UInt8
+
+  Branch(cond,level) = new(cond,level,cond ? opcodes["br_if"] : opcodes["br"])
 end
 
 Branch(l::Integer) = Branch(false, l)
 
-struct Return <: Instruction end
+struct Return <: Instruction 
+  opcode::UInt8
 
-struct Unreachable <: Instruction end
+  Return() = new(opcodes["return"])
+end
+
+struct Unreachable <: Instruction 
+  opcode::UInt8
+
+  Unreachable() = new(opcodes["unreachable"])
+end
 
 const unreachable = Unreachable()
 
@@ -88,6 +131,10 @@ end
 struct Module
   funcs::Vector{Func}
 end
+
+# Write bytecode
+
+Base.write(io::IO, i::Instruction) = write(io,i.opcode)
 
 # Printing
 
