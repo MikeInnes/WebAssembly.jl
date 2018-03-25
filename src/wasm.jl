@@ -104,6 +104,8 @@ struct Module
   funcs::Vector{Func}
 end
 
+Module() = Module(Vector{Import}[], Vector{Export}[], Vector{Func}[])
+
 # Printing
 
 Base.show(io::IO, i::Nop)      = print(io, "nop")
@@ -171,7 +173,7 @@ function printwasm(io, x::Import, level)
 end
 
 function Base.show(io::IO, f::Func)
-  print(io, "(func")
+  print(io, "(func \$$(f.name) ")
   foreach(p -> print(io, " (param $p)"), f.params)
   foreach(p -> print(io, " (result $p)"), f.returns)
   if !isempty(f.locals)
@@ -183,13 +185,13 @@ function Base.show(io::IO, f::Func)
 end
 
 function printwasm(io::IO, f::Func, level)
-  print(io, "(func")
-  printwasm_(io, f.body.body, 1)
-  foreach(p -> printwasm_(io, " (param $p)", level + 1), f.params)
-  foreach(p -> printwasm_(io, " (result $p)", level + 1), f.returns)
+  print(io, "\n", "  "^(level))
+  print(io, "(func \$$(f.name) ")
+  foreach(p -> print(io, " (param $p)"), f.params)
+  foreach(p -> print(io, " (result $p)"), f.returns)
   if !isempty(f.locals)
     print(io, "\n ")
-    foreach(p -> printwasm_(io, " (local $p)", level + 1), f.locals)
+    foreach(p -> print(io, " (local $p)"), f.locals)
   end
   printwasm_(io, f.body.body, level + 1)
   print(io, ")")
