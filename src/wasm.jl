@@ -79,15 +79,32 @@ struct Unreachable <: Instruction end
 const unreachable = Unreachable()
 
 struct Func
+  name::Symbol
   params::Vector{WType}
   returns::Vector{WType}
   locals::Vector{WType}
   body::Block
 end
 
+struct Import
+  mod::Symbol
+  name::Symbol
+  typ::Symbol   # :func, :table, :memory, :global
+  params::Vector{WType}
+end
+
+struct Export
+  name::Symbol
+  typ::Symbol   # :func, :table, :memory, :global
+end
+
 struct Module
+  imports::Vector{Import}
+  exports::Vector{Export}
   funcs::Vector{Func}
 end
+
+Module() = Module(Vector{Import}[], Vector{Export}[], Vector{Func}[])
 
 # Printing
 
@@ -139,8 +156,24 @@ end
 
 Base.show(io::IO, i::Union{Block,Loop,If}) = printwasm(io, i, 0)
 
+function printwasm(io, x::Export, level)
+  print(io, "\n", "  "^(level))
+  print(io, "(export \"$(x.name)\" ($(x.typ) \$$(x.name)))")
+end
+
+function printwasm(io, x::Import, level)
+  print(io, "\n", "  "^(level))
+  print(io, "(import \"$(x.mod)\" \"$(x.name)\" ($(x.typ) \$$(x.name)")
+  if x.typ == :func && length(x.params) > 0
+    print(io, " (param")
+    foreach(p -> print(io, " $p"), x.params)
+    print(io, ")")
+  end
+  print(io, "))")
+end
+
 function Base.show(io::IO, f::Func)
-  print(io, "(func")
+  print(io, "(func \$$(f.name) ")
   foreach(p -> print(io, " (param $p)"), f.params)
   foreach(p -> print(io, " (result $p)"), f.returns)
   if !isempty(f.locals)
@@ -148,5 +181,26 @@ function Base.show(io::IO, f::Func)
     foreach(p -> print(io, " (local $p)"), f.locals)
   end
   printwasm_(io, f.body.body, 1)
+  print(io, ")")
+end
+
+function printwasm(io::IO, f::Func, level)
+  print(io, "\n", "  "^(level))
+  print(io, "(func \$$(f.name) ")
+  foreach(p -> print(io, " (param $p)"), f.params)
+  foreach(p -> print(io, " (result $p)"), f.returns)
+  if !isempty(f.locals)
+    print(io, "\n ")
+    foreach(p -> print(io, " (local $p)"), f.locals)
+  end
+  printwasm_(io, f.body.body, level + 1)
+  print(io, ")")
+end
+
+function Base.show(io::IO, m::Module)
+  print(io, "(module")
+  foreach(p -> printwasm(io, p, 1), m.imports)
+  foreach(p -> printwasm(io, p, 1), m.exports)
+  foreach(p -> printwasm(io, p, 1), m.funcs)
   print(io, ")")
 end
