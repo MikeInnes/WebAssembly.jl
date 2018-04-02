@@ -99,12 +99,12 @@ struct Export
 end
 
 struct Module
-  imports::Vector{Import}
-  exports::Vector{Export}
-  funcs::Vector{Func}
+  imports::Dict
+  exports::Dict
+  funcs::Dict
 end
 
-Module() = Module(Vector{Import}[], Vector{Export}[], Vector{Func}[])
+Module() = Module(Dict(), Dict(), Dict())
 
 # Printing
 
@@ -199,8 +199,8 @@ end
 
 function Base.show(io::IO, m::Module)
   print(io, "(module")
-  foreach(p -> printwasm(io, p, 1), m.imports)
-  foreach(p -> printwasm(io, p, 1), m.exports)
-  foreach(p -> printwasm(io, p, 1), m.funcs)
+  foreach(p -> printwasm(io, p[2], 1), m.imports)
+  foreach(p -> printwasm(io, p[2], 1), m.exports)
+  foreach(p -> printwasm(io, p[2], 1), m.funcs)
   print(io, ")")
 end
