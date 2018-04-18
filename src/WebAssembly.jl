@@ -7,10 +7,10 @@ include("looper.jl")
 module Instructions
 
 using ..WebAssembly: Instruction, Const, Nop, Local, SetLocal, Op, Select, Convert,
-  Block, If, Loop, Branch, Return, Unreachable, Label, Goto, nop, unreachable
+  Block, If, Loop, Branch, Call, Return, Unreachable, Label, Goto, nop, unreachable
 
 export Instruction, Const, Nop, Local, SetLocal, Op, Select, Convert,
-  Block, If, Loop, Branch, Return, Unreachable, Label, Goto, nop, unreachable
+  Block, If, Loop, Branch, Call, Return, Unreachable, Label, Goto, nop, unreachable
 
 end
 
