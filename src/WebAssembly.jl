@@ -1,5 +1,6 @@
 module WebAssembly
 
+include("opcodes.jl")
 include("wasm.jl")
 include("passes.jl")
 include("looper.jl")
