@@ -82,12 +82,40 @@ struct Unreachable <: Instruction end
 
 const unreachable = Unreachable()
 
+struct FuncType
+  # TODO
+end
+
 struct Func
   name::Symbol
   params::Vector{WType}
   returns::Vector{WType}
   locals::Vector{WType}
   body::Block
+end
+
+struct Table
+  # TODO
+end
+
+struct Mem
+  name::Symbol
+  min::UInt32
+  max::Union{UInt32, Void}
+end
+
+struct Global
+  # TODO
+end
+
+struct Elem
+  # TODO
+end
+
+struct Data
+  memidx::UInt32
+  offset::UInt32
+  data::Vector{UInt8}
 end
 
 struct Import
@@ -105,9 +133,16 @@ struct Export
 end
 
 struct Module
+  types::Vector{FuncType}
+  funcs::Vector{Func}
+  tables::Vector{Table}
+  mems::Vector{Mem}       # Only one of these is allowed right now
+  globals::Vector{Global}
+  elem::Vector{Elem}
+  data::Vector{Data}
+  start::Ref{Int}
   imports::Vector{Import}
   exports::Vector{Export}
-  funcs::Vector{Func}
 end
 
 # Printing
@@ -161,6 +196,16 @@ end
 
 Base.show(io::IO, i::Union{Block,Loop,If}) = printwasm(io, i, 0)
 
+function printwasm(io, x::Mem, level)
+  print(io, "\n", "  "^(level))
+  print(io, "(memory $(x.min))")    # TODO: add x.max
+end
+
+function printwasm(io, x::Data, level)
+  print(io, "\n", "  "^(level))
+  print(io, """(data (i32.const $(x.offset)) "$(String(x.data))"))""")
+end
+
 function printwasm(io, x::Export, level)
   print(io, "\n", "  "^(level))
   print(io, "(export \"$(x.name)\" ($(x.typ) \$$(x.internalname)))")
@@ -207,6 +252,8 @@ function Base.show(io::IO, m::Module)
   print(io, "(module")
   foreach(p -> printwasm(io, p, 1), m.imports)
   foreach(p -> printwasm(io, p, 1), m.exports)
+  foreach(p -> printwasm(io, p, 1), m.mems)
+  foreach(p -> printwasm(io, p, 1), m.data)
   foreach(p -> printwasm(io, p, 1), m.funcs)
   print(io, ")")
 end

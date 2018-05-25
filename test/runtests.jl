@@ -1,6 +1,6 @@
 using WebAssembly
 using WebAssembly.Instructions
-using WebAssembly: WType, Func, Module, Import, Export, i32, f64
+using WebAssembly: WType, Func, Module, FuncType, Func, Table, Mem, Global, Elem, Data, Import, Export, i32, f64
 using Base.Test
 
 @testset "WebAssembly" begin
@@ -12,10 +12,8 @@ end
 
 @testset "Import-export" begin
 
-m = Module([Import(:env, :mathfun, :func, [i32, f64])],
-           [Export(:fun, :func),
-            Export(:fun2, :func)],
-           Func[])
-
+m = Module(FuncType[], Func[], Table[], Mem[], Global[], Elem[], Data[], Ref(0),
+           [Import(:env, :mathfun, :func, [i32, f64], f64)],
+           [Export(:fun, :fun, :func)])
 
 end
