@@ -73,6 +73,10 @@ operations =
       ,:shl    => apN(2, <<)
       ,:or     => apN(2, |)
       ,:and    => apN(2, &)
+      ,:rem_s  => apN(2, rem)
+      ,:rem_u  => apN_U(2, rem)
+      ,:div_s  => apN(2, div)
+      ,:div_u  => apN_U(2, div)
       )
 
 # Level Agnostic Functions
