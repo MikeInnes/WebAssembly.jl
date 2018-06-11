@@ -34,15 +34,15 @@ function branches_to(b)
   return result
 end
 
-# After removing branch, none are point to the branch, but decrement pointing
-# above.
+# After removing a block that has no branches to it, decrement all of the
+# branches that point to any level above it.
 function decbranches(i)
   mapbranches(i) do b, l
     b.level > l ? Branch(b.cond, b.level-1) : b
   end
 end
 
-# After adding branch, so increment all branches pointing above the added branch
+# After adding a block increment all branches pointing to a level above it.
 function incbranches(i)
   mapbranches(i) do b, l
     b.level >= l ? Branch(b.cond, b.level+1) : b
