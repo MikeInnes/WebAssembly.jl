@@ -22,22 +22,6 @@ function deadcode(x)
   end
 end
 
-# recover ifs
-
-function makeifs(code)
-  prewalk(code) do x
-    x isa Block || return x
-    i = findfirst(x -> x isa Branch, x.body)
-    i != 0 && x.body[i].cond || return x
-    cond = x.body[1:i-1]
-    cond[end] == Op(i32, :eqz) ? pop!(cond) : push!(cond, Op(i32, :eqz))
-    return Block([cond..., If(x.body[i+1:end], [])])
-  end
-end
-
-# remove unused blocks
-# TODO: collapse blocks with the same head
-
 mapbranches(f, b, level = -1) = applyblock(is -> mapbranches.(f, is, level+1), b)
 mapbranches(f, b::Branch, level = -1) = f(b, level)
 
@@ -50,11 +34,37 @@ function branches_to(b)
   return result
 end
 
+# After removing a block that has no branches to it, decrement all of the
+# branches that point to any level above it.
 function decbranches(i)
   mapbranches(i) do b, l
     b.level > l ? Branch(b.cond, b.level-1) : b
   end
 end
+
+# After adding a block increment all branches pointing to a level above it.
+function incbranches(i)
+  mapbranches(i) do b, l
+    b.level >= l ? Branch(b.cond, b.level+1) : b
+  end
+end
+
+# recover ifs
+
+function makeifs(code)
+  prewalk(code) do x
+    x isa Block || return x
+    i = findfirst(x -> x isa Branch, x.body)
+    i != 0 && x.body[i].cond || return x
+    cond = x.body[1:i-1]
+    cond[end] == Op(i32, :eqz) ? pop!(cond) : push!(cond, Op(i32, :eqz))
+    fixbranches = incbranches(Block(x.body[i+1:end])).body
+    return Block([cond..., If(fixbranches, [])])
+  end
+end
+
+# remove unused blocks
+# TODO: collapse blocks with the same head
 
 function rmblocks(code)
   prewalk(code) do x
