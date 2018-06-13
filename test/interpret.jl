@@ -7,17 +7,24 @@
 function rand_test_wasm(f, wasm_f, n_tests = 50)
   for i in 1:n_tests
     args = [rand(WebAssembly.jltype(typ)) for typ in wasm_f.params]
-    if WebAssembly.interpretwasm(wasm_f, args)[1] != f(args...)
-      return false
-    end
+    WebAssembly.interpretwasm(wasm_f, args)[1] != f(args...) && return false
   end
   return true
 end
 
+function readWast(filename)
+    f = open(filename)
+    s = readstring(f)
+    close(f)
+    return s
+end
+
 relu(x) = ifelse(x > 0, x, 0)
 WA = WebAssembly
-wasm_relu = WA.Func(Symbol("#relu_Int64"), [WA.i64], [WA.i64], [], WA.Block([WA.Const(0), WA.Local(0), WA.Local(0), WA.Const(0), WA.Op(WA.i64, :lt_s), WA.Select(), WA.Return()]))
-@test rand_test_wasm(relu, wasm_relu)
+relu_wasm = WA.parsewast("test/wast/functions/relu_ifelse.wast")
+relu_wasm_expected = WA.Func(Symbol("#relu_Int64"), [WA.i64], [WA.i64], [], WA.Block([WA.Const(0), WA.Local(0), WA.Local(0), WA.Const(0), WA.Op(WA.i64, :lt_s), WA.Select(), WA.Return()]))
+# @test relu_wasm == relu_wasm_expected
+@test rand_test_wasm(relu, relu_wasm)
 
 # orelu(x) = ifelse(x < 0, x, 0)
 # wasm_orelu = @code_wasm orelu(1)
@@ -65,7 +72,7 @@ wasm_relu = WA.Func(Symbol("#relu_Int64"), [WA.i64], [WA.i64], [], WA.Block([WA.
 
 # function sumn(n)
 #   x = 0
-#   if n > 100 
+#   if n > 100
 #     n = 100
 #   end
 #   for i = 1:n

@@ -4,7 +4,7 @@ function parsewast(filename)
   close(f)
 
   brackets = parsebrackets(s)
-
+  return func(brackets[1][1])
 end
 
 parsebrackets(s) = pb(s, 1)
