@@ -13,6 +13,7 @@ include("wasm.jl")
 include("passes.jl")
 include("looper.jl")
 include("io.jl")
+include("parser.jl")
 
 module Instructions
 
