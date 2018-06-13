@@ -4,6 +4,7 @@ function parsewast(filename)
   close(f)
 
   brackets = parsebrackets(s)
+  # @show brackets[1][1]
   return func(brackets[1][1])
 end
 
@@ -28,59 +29,78 @@ function pb(s, i)
   return (result, j)
 end
 
+function if_(wast)
+  If(body(wast[2][2:end]), length(wast) == 3 ? body(wast[3][2:end]) : [])
+end
+
 function op(wast)
-  args = split(wast)
-  op = split(args[1], ".")
+  # wast = split(wast)
+  @show wast
+  op = split(wast[1], ".")
   if length(op) == 2
     wtype = parse(WType, op[1])
     if op[2] == "const"
-      return Const(wtype, parse(jltype(wtype), args[2]))
+      return Const(wtype, parse(jltype(wtype), wast[2]))
     # else if op[2] == "convert" # Need to handle all the conversions at some point.
     else
       return Op(wtype, Symbol(op[2]))
     end
   end
-  op = split(args[1])
-  op[1] == "nop"         && return Nop()
-  op[1] == "get_local"   && return Local(parse(Int64, args[2]))
-  op[1] == "set_local"   && return SetLocal(false, parse(Int64, args[2]))
-  op[1] == "tee_local"   && return SetLocal(true, parse(Int64, args[2]))
-  op[1] == "call"        && return Call(Symbol(args[2][2:end]))
-  op[1] == "select"      && return Select()
-  op[1] == "return"      && return Return()
-  op[1] == "unreachable" && return Unreachable()
+  op = wast[1]
+  op == "nop"         && return Nop()
+  op == "get_local"   && return Local(parse(Int64, wast[2]))
+  op == "set_local"   && return SetLocal(false, parse(Int64, wast[2]))
+  op == "tee_local"   && return SetLocal(true, parse(Int64, wast[2]))
+  op == "call"        && return Call(Symbol(wast[2][2:end]))
+  op == "select"      && return Select()
+  op == "return"      && return Return()
+  op == "unreachable" && return Unreachable()
+  op[1] == "if"       && return if_(wast)
+  # op == "if"          && return If()
+  # @show wast
 
   #TODO: Ifs, Conversions, blocks. others.
+  error("Operator " * string(op) * " not defined.")
 
 end
 
-function block(wast)
-  return Block(map(op, wast))
+block(wast) = Block(body(wast))
+body(wast) = map(op, wast)
+
+rmLayer(xs::Array) = length(xs) == 1 ? xs[1] : xs
+
+# Split strings, remove white space
+function deNest(xs)
+  xs isa String && return split(xs)
+  xs = filter(x -> !((x isa String && all(isspace, x)) || (x isa Array && length(x) == 0)), xs)
+  xs = map(x -> (x isa Array ? deNest(length(x) == 1 ? x[1] : x) : (x isa String ? split(x) : x)), xs)
 end
+
 
 #todo, named registers?
 function registers(wast, i, n)
   rs = Vector{WType}()
-  while wast[i][1] == n[1]
-    r = split(wast[i])
-    if r[1] == n
-      push!(rs, parse(WType, r[2]))
-    end
+  while wast[i][1] == n
+    push!(rs, parse(WType, wast[i][2]))
     i = i + 1
   end
   return (rs, i)
 end
 
 function func(wast)
+  println("New Run")
 
   #Name
   name = Symbol(split(wast[1])[2][2:end])
 
   #Parameters
-  wast = filter(x->typeof(x) == Array{Any, 1}, wast)
-  wast = map(x->x[1], wast)
-  i = 1
+  # wast = filter(s -> !(s isa String && all(isspace, s)), wast)
+  # wast = map(x->x[1], wast)
+  wast = deNest(wast)
+  @show wast
+  i = 2
   (params, i) = registers(wast, i, "param")
+  # @show params
   (returns, i) = registers(wast, i, "result")
   (locals, i) = registers(wast, i, "local")
   # while wast[i][2] != 'r'
