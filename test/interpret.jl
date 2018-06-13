@@ -12,9 +12,11 @@ end
 
 relu_ifelse(x) = ifelse(x > 0, x, 0)
 relu_ternary(x) = x > 0 ? x : 0
+relu_if_then_else = relu_ifelse
 
 tests = @pair_with_names [ relu_ifelse
                          , relu_ternary
+                         , relu_if_then_else
                          ]
 
 @testset "Interpreter" begin
