@@ -3,10 +3,7 @@ function parsewast(filename)
   s = readstring(f)
   close(f)
 
-  # brackets = parsebrackets(s)
-  # @show brackets[1][1]
-  # @show (s |> parsebrackets |> deNest)
-  (s |> parsebrackets |> deNest) |> func
+  s |> parsebrackets |> deNest |> func
 end
 
 parsebrackets(s) = pb(s, 1)[1]
