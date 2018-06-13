@@ -55,7 +55,11 @@ function op(wast)
   op == "select"      && return Select()
   op == "return"      && return Return()
   op == "unreachable" && return Unreachable()
+  op == "br"       && return Branch(false, parse(Int64, wast[2]))
+  op == "br_if"       && return Branch(true, parse(Int64, wast[2]))
   op[1] == "if"       && return if_(wast)
+  op[1] == "block"    && return block(wast[2:end])
+  op[1] == "loop"     && return loop(wast[2:end])
   # op == "if"          && return If()
   # @show wast
 
@@ -65,6 +69,7 @@ function op(wast)
 end
 
 block(wast) = Block(body(wast))
+loop(wast) = Loop(body(wast))
 body(wast) = map(op, wast)
 
 rmLayer(xs::Array) = length(xs) == 1 ? xs[1] : xs
