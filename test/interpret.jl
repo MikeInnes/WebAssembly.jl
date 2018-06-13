@@ -19,12 +19,13 @@ function readWast(filename)
     return s
 end
 
-relu(x) = ifelse(x > 0, x, 0)
-WA = WebAssembly
-relu_wasm = WA.parsewast("test/wast/functions/relu_ifelse.wast")
-relu_wasm_expected = WA.Func(Symbol("#relu_Int64"), [WA.i64], [WA.i64], [], WA.Block([WA.Const(0), WA.Local(0), WA.Local(0), WA.Const(0), WA.Op(WA.i64, :lt_s), WA.Select(), WA.Return()]))
-# @test relu_wasm == relu_wasm_expected
-@test rand_test_wasm(relu, relu_wasm)
+relu_ifelse(x) = ifelse(x > 0, x, 0)
+relu_wasm = parsewast("test/wast/functions/relu_ifelse.wast")
+relu_wasm_expected = Func(Symbol("#relu_Int64"), [i64], [i64], [], Block([Const(0), Local(0), Local(0), Const(0), Op(i64, :lt_s), Select(), Return()]))
+@test relu_wasm.body.body == relu_wasm_expected.body.body
+@test relu_wasm.params == relu_wasm_expected.params
+@test relu_wasm.returns == relu_wasm_expected.returns
+@test rand_test_wasm(relu_ifelse, relu_wasm)
 
 # orelu(x) = ifelse(x < 0, x, 0)
 # wasm_orelu = @code_wasm orelu(1)
