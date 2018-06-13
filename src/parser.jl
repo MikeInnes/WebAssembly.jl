@@ -1,16 +1,10 @@
-# import Base.parse
-# importall WebAssembly
-# using WebAssembly
-
-include("wasm.jl")
-
 function parsewast(filename)
   f = open(filename)
   s = readstring(f)
   close(f)
 
   brackets = parsebrackets(s)
-  
+
 end
 
 parsebrackets(s) = pb(s, 1)
@@ -29,7 +23,7 @@ function pb(s, i)
       return (push!(result, s[i:j-1]), j)
     end
     j = j + 1
-  end 
+  end
   j > i && push!(result, s[i:j - 1])
   return (result, j)
 end
@@ -55,9 +49,9 @@ function op(wast)
   op[1] == "select"      && return Select()
   op[1] == "return"      && return Return()
   op[1] == "unreachable" && return Unreachable()
-  
+
   #TODO: Ifs, Conversions, blocks. others.
-  
+
 end
 
 function block(wast)
@@ -78,7 +72,7 @@ function registers(wast, i, n)
 end
 
 function func(wast)
-  
+
   #Name
   name = Symbol(split(wast[1])[2][2:end])
 
@@ -96,7 +90,7 @@ function func(wast)
   #   end
   #   i = i + 1
   # end
-  
+
   #Returns
   # ps = split(wast[i])
   # returns = parse(WType, ps[2])
@@ -110,12 +104,12 @@ end
 # function pb(ss)
 #   println(ss)
 #   ns = split(ss[1], ")", limit = 2)
-#   if length(ns) == 2 
+#   if length(ns) == 2
 #     return ("", [ns[1]], vcat([ns[2]], ss[2:end]))
 #   elseif length(ns[end]) > 0 && ns[end][end] == ")"
 #     # return [[ns[1]], pb(ss[2:end])]
 #     return ("", ns, ss[2:end])
-#   else 
+#   else
 #     if length(ss) > 1
 #       ns = pb(ss[2:end])
 #       # if length(ns) > 1
@@ -134,5 +128,3 @@ end
 # function parsefunc(s)
 #   ss = split(s, "\n")
 #   funcdef = rmbrackets(ss[1])
-
-
