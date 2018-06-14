@@ -1,4 +1,4 @@
-parsewast(filename) = filename |> getFileParseBrackets |> func
+parsewast(filename) = filename |> getFileParseBrackets |> module_
 
 getFileParseBrackets(filename) = filename |> getFileString |> parsebrackets
 
@@ -33,7 +33,7 @@ end
 rmLayer(xs::Array) = length(xs) == 1 ? xs[1] : xs
 
 # Split strings, remove white space and excess nestings of arrays.
-# E.g: [[["get_local 1"]]] -> ["get_local", "1"]
+# [[["func $this", ["get_local 1"]]]] -> [["func", "$this"], ["get_local", "1"]]
 function deNest(xs)
   xs isa String && return xs |> split |> rmLayer
   xs = filter(x -> !((x isa String && all(isspace, x)) || isempty(x)), xs)
@@ -89,7 +89,7 @@ function registers(wast, i, reg_type)
 end
 
 function func(wast)
-  name = Symbol(wast[1][2:end])
+  name = Symbol(wast[1][2][2:end])
 
   i = 2
   params,  i = registers(wast, i, "param")
@@ -99,4 +99,23 @@ function func(wast)
   bloc = block(wast[i:end])
 
   return Func(name, params, returns, locals, bloc)
+end
+
+function export_(wast)
+  name = Symbol(wast[1][2][2:end-1])
+  internalname = Symbol(wast[2][2][2:end])
+  typ = Symbol(wast[2][1])
+  return Export(name, internalname, typ)
+end
+
+function module_items(m, wast)
+  p = wast[1] isa String ? wast[1] : wast[1][1]
+  p == "func"   && push!(m.funcs,   func(wast))
+  p == "export" && push!(m.exports, export_(wast))
+  return m
+end
+
+function module_(wast)
+  m = WebAssembly.Module([], [], [], [], [], [], [], Ref(0), [], [])
+  return reduce(module_items, m, wast[2:end])
 end

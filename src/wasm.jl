@@ -227,7 +227,7 @@ function printwasm(io, x::Import, level)
 end
 
 function Base.show(io::IO, f::Func)
-  print(io, "(func \$$(f.name) ")
+  print(io, "(func \$$(f.name)")
   foreach(p -> print(io, " (param $p)"), f.params)
   foreach(p -> print(io, " (result $p)"), f.returns)
   if !isempty(f.locals)
