@@ -17,11 +17,13 @@ function pow(x, n)
   end
   return r
 end
+addTwo(x, y) = x + y
 
 tests = @pair_with_names [ relu_ifelse
                          , relu_ternary
                          , relu_if_then_else
                          , pow
+                         , addTwo
                          ]
 
 function rand_test_wasm(f, wasm_f, n_tests = 50, max = 100)
