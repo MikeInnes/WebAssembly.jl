@@ -1,6 +1,6 @@
 using WebAssembly
 using WebAssembly.Instructions
-using WebAssembly: parsewast, interpretwasm, WType, Func, Module, FuncType, Func, Table, Mem, Global, Elem, Data, Import, Export, i32, i64, f32, f64
+using WebAssembly: parsewast, interpretwasm, interpret_module, WType, Func, Module, FuncType, Func, Table, Mem, Global, Elem, Data, Import, Export, i32, i64, f32, f64
 using Base.Test
 
 

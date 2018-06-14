@@ -26,12 +26,26 @@ tests = @pair_with_names [ relu_ifelse
                          , addTwo
                          ]
 
+fib(x) = x <= 1 ? 1 : fib(x - 1) + fib(x - 2)
+this(x) = pow(x + 1, x - 1)
+
 function rand_test_wasm(f, wasm_f, n_tests = 50, max = 100)
  for i in 1:n_tests
    args = [rand(WebAssembly.jltype(typ)) % max for typ in wasm_f.params]
-   WebAssembly.interpretwasm(wasm_f, args)[1] != f(args...) && return false
+   WebAssembly.interpretwasm(wasm_f, Dict(), args)[1] != f(args...) && return false
  end
  return true
+end
+
+function rand_test_module(fs, m, n_tests = 50, max = 10)
+  wasm_fs = interpret_module(m)
+  for i in eachindex(fs)
+    for j in 1:n_tests
+      args = [rand(WebAssembly.jltype(typ)) % max for typ in m.funcs[i].params]
+      wasm_fs[i](args...)[1] != fs[i](args...) && return false
+    end
+  end
+  return true
 end
 
 @testset "Parse-Interpret" begin
@@ -62,5 +76,9 @@ expected_func = Func(Symbol("addTwo"), [i32, i32], [i32], [], Block([Local(0), L
 @test m.funcs[1].params == expected_func.params
 @test m.funcs[1].returns == expected_func.returns
 @test m.funcs[1].name == expected_func.name
+
+m2 = parsewast("test/wast/modules/fib_pow.wast")
+@test m2.exports == [Export(:this, Symbol("#this_Int64"), :func), Export(:pow, Symbol("#pow_Int64_Int64"), :func), Export(:fib, Symbol("#fib_Int64"), :func)]
+@test rand_test_module([fib, this, pow], m2)
 
 end
