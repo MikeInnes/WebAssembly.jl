@@ -1,9 +1,9 @@
-function interpretwasm(f::Func, args)
+function interpretwasm(f::Func, fs, args)
   params = [convert(jltype(typ), arg) for (typ, arg) in zip(f.params, args)]
   locals = [convert(jltype(typ), 0) for typ in f.locals]
   ms = vcat(params, locals)
-  
-  apInstr(f.body, ms, 0)
+
+  apInstr(f.body, ms, 0, fs)
 
   returns = popn!(ms, length(f.returns))
 
@@ -17,11 +17,26 @@ function interpretwasm(f::Func, args)
   return returns
 end
 
-function runBody(body, ms, level)
+function toFunction(f::Func, fs)
+  return ((args...) -> interpretwasm(f, fs, args))
+end
+
+function interpret_module(m::Module)
+  d = Dict()
+  [(g = toFunction(f, d); d[f.name] = (length(f.params), g); g) for f in m.funcs]
+end
+
+
+function runBody(body, ms, level, fs)
   for i in body
-    if typeof(i) in [Loop, Block, Branch, Return, If]
-      level_ = apInstr(i, ms, level + 1) 
+    if typeof(i) in [Branch, Return]
+      level_ = apInstr(i, ms, level + 1)
       level_ <= level && return level_
+    elseif typeof(i) in [If, Block, Loop]
+      level_ = apInstr(i, ms, level + 1, fs)
+      level_ <= level && return level_
+    elseif i isa Call
+      apInstr(i, ms, level + 1, fs)
     else
       apInstr(i, ms)
     end
@@ -55,7 +70,7 @@ resign(x) = x
 
 apN_U(n, f) = ms -> push!(ms, resign(f(unsign(popn!(ms, n))...)))
 
-operations = 
+operations =
   Dict(:lt_s   => apN(2, <)
       ,:lt_u   => apN_U(2, <)
       ,:le_s   => apN(2, <=)
@@ -101,15 +116,19 @@ end
 
 # Level Based Functions
 
-apInstr(i::Block,  ms, l) = runBody(i.body, ms, l)
 apInstr(i::Return, ms, l) = 0
 apInstr(i::Branch, ms, l) = i.cond && pop!(ms) != 0 || !i.cond ? l - i.level - 1 : l
-apInstr(i::If,     ms, l) = pop!(ms) != 0 ? runBody(i.t, ms, l) : runBody(i.f, ms, l)
 
-function apInstr(loop::Loop, ms, level)
+# Instructions dependent on in scope functions
+
+apInstr(i::Call,   ms, l, fs) = (f = fs[i.name]; push!(ms, f[2]((popn!(ms, f[1]))...)...))
+
+apInstr(i::If,     ms, l, fs) = pop!(ms) != 0 ? runBody(i.t, ms, l, fs) : runBody(i.f, ms, l, fs)
+apInstr(i::Block,  ms, l, fs) = runBody(i.body, ms, l, fs)
+function apInstr(loop::Loop, ms, level, fs)
   level_ = level
   while level_ == level
-    level_ = runBody(loop.body, ms, level) 
+    level_ = runBody(loop.body, ms, level, fs)
   end
   return level_
 end

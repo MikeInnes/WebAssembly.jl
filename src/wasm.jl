@@ -240,7 +240,7 @@ end
 
 function printwasm(io::IO, f::Func, level)
   print(io, "\n", "  "^(level))
-  print(io, "(func \$$(f.name) ")
+  print(io, "(func \$$(f.name)")
   foreach(p -> print(io, " (param $p)"), f.params)
   foreach(p -> print(io, " (result $p)"), f.returns)
   if !isempty(f.locals)
