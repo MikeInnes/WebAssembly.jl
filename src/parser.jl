@@ -1,12 +1,15 @@
-function parsewast(filename)
+parsewast(filename) = filename |> getFileParseBrackets |> func
+
+getFileParseBrackets(filename) = filename |> getFileString |> parsebrackets
+
+function getFileString(filename)
   f = open(filename)
   s = readstring(f)
   close(f)
-
-  s |> parsebrackets |> deNest |> func
+  return s
 end
 
-parsebrackets(s) = pb(s, 1)[1]
+parsebrackets(s) = pb(s, 1)[1] |> deNest
 
 function pb(s, i)
   j = i
@@ -27,6 +30,18 @@ function pb(s, i)
   return (result, j)
 end
 
+rmLayer(xs::Array) = length(xs) == 1 ? xs[1] : xs
+
+# Split strings, remove white space and excess nestings of arrays.
+# E.g: [[["get_local 1"]]] -> ["get_local", "1"]
+function deNest(xs)
+  xs isa String && return xs |> split |> rmLayer
+  xs = filter(x -> !((x isa String && all(isspace, x)) || isempty(x)), xs)
+  xs = xs isa Array && length(xs) == 1 ? deNest(xs[1]) : xs
+  xs = xs isa Array ? map(deNest, xs) : xs
+  return xs
+end
+
 function if_(wast)
   If(body(wast[2][2:end]), length(wast) == 3 ? body(wast[3][2:end]) : [])
 end
@@ -38,7 +53,7 @@ function op(wast)
     wtype = parse(WType, dotop[1])
     if dotop[2] == "const"
       return Const(wtype, parse(jltype(wtype), wast[2]))
-    # else if op[2] == "convert" # Need to handle all the conversions at some point.
+      #TODO: Conversions, Truncations, e.t.c. Add as required.
     else
       return Op(wtype, Symbol(dotop[2]))
     end
@@ -57,97 +72,31 @@ function op(wast)
   op == "block"       && return block(wast[2:end])
   op == "loop"        && return loop(wast[2:end])
 
-  #TODO: Ifs, Conversions, blocks. others.
   error("Operator " * string(op) * " not defined.")
-
 end
 
-block(wast) = Block(body(wast))
-loop(wast) = Loop(body(wast))
+block(wast) = wast |> body |> Block
+loop(wast)  = wast |> body |> Loop
 body(wast) = map(op, wast)
 
-rmLayer(xs::Array) = length(xs) == 1 ? xs[1] : xs
-
-# Split strings, remove white space
-function deNest(xs)
-  @show xs
-  xs isa String && return rmLayer(split(xs))
-  xs = filter(x -> !((x isa String && all(isspace, x)) || (x isa Array && length(x) == 0)), xs)
-  xs = xs isa Array && length(xs) == 1 ? deNest(xs[1]) : xs
-  xs = xs isa Array ? map(x -> deNest(x), xs) : xs
-end
-
-
-#todo, named registers?
-function registers(wast, i, n)
-  @show wast[i]
-  @show wast[i][1]
+function registers(wast, i, reg_type)
   rs = Vector{WType}()
-  while wast[i][1] == n
+  while wast[i][1] == reg_type
     push!(rs, parse(WType, wast[i][2]))
     i = i + 1
   end
-  return (rs, i)
+  return rs, i
 end
 
 function func(wast)
-  # println("New Run")
-
-  @show wast
-  #Name
   name = Symbol(wast[1][2:end])
 
-  #Parameters
-  # wast = filter(s -> !(s isa String && all(isspace, s)), wast)
-  # wast = map(x->x[1], wast)
-  # wast = deNest(wast)
   i = 2
-  (params, i) = registers(wast, i, "param")
-  # @show params
-  (returns, i) = registers(wast, i, "result")
-  (locals, i) = registers(wast, i, "local")
-  # while wast[i][2] != 'r'
-  #   ps = split(wast[i])
-  #   if ps[i] == "param"
-  #     push!(params, parse(WType, ps[2]) :: WType)
-  #   end
-  #   i = i + 1
-  # end
+  params,  i = registers(wast, i, "param")
+  returns, i = registers(wast, i, "result")
+  locals,  i = registers(wast, i, "local")
 
-  #Returns
-  # ps = split(wast[i])
-  # returns = parse(WType, ps[2])
-
-  #Ops
   bloc = block(wast[i:end])
 
   return Func(name, params, returns, locals, bloc)
 end
-
-# function pb(ss)
-#   println(ss)
-#   ns = split(ss[1], ")", limit = 2)
-#   if length(ns) == 2
-#     return ("", [ns[1]], vcat([ns[2]], ss[2:end]))
-#   elseif length(ns[end]) > 0 && ns[end][end] == ")"
-#     # return [[ns[1]], pb(ss[2:end])]
-#     return ("", ns, ss[2:end])
-#   else
-#     if length(ss) > 1
-#       ns = pb(ss[2:end])
-#       # if length(ns) > 1
-#       #   return vcat([ss[1], [ns[1]]], ns[2:end])
-#       # else
-#       #   return [ss[1], [ns[1]]]
-#       # end
-#       return (ns[1] + ss[1], )
-#     else
-#       return [ss[1]]
-#     end
-#   end
-# end
-
-
-# function parsefunc(s)
-#   ss = split(s, "\n")
-#   funcdef = rmbrackets(ss[1])
