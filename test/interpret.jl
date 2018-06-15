@@ -106,7 +106,7 @@ this(x) = pow(x + 1, x - 1)
 function rand_test_wasm(f, wasm_f, n_tests = 50, max = 100)
  for i in 1:n_tests
    args = [rand(WebAssembly.jltype(typ)) % max for typ in wasm_f.params]
-   WebAssembly.interpretwasm(wasm_f, Dict(), args)[1] != f(args...) && return false
+   WebAssembly.interpretwasm(wasm_f, WebAssembly.emptyModuleState(), args)[1] != f(args...) && return false
  end
  return true
 end
@@ -217,5 +217,20 @@ m2 = wast"""
 """
 @test m2.exports == [Export(:this, Symbol("#this_Int64"), :func), Export(:pow, Symbol("#pow_Int64_Int64"), :func), Export(:fib, Symbol("#fib_Int64"), :func)]
 @test rand_test_module([fib, this, pow], m2)
+
+m3 = parsewast("test/wast/modules/sum.wast")
+
+@test m3.exports == [Export(:mem, :main, :memory), Export(:sum, :sum, :func)]
+@test length(m3.data[1].data) == 65536 * 10
+int_array = reinterpret(Int32, m3.data[1].data)
+for i in 1:10
+  int_array[i] = i
+end
+sum_, = interpret_module(m3)
+@test sum_(0, 10)[1] == sum(int_array)
+for i in 1:10000
+  int_array[i] = i
+end
+@test sum_(0, 10000)[1] == sum(int_array)
 
 end

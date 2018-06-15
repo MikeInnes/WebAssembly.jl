@@ -115,14 +115,31 @@ function export_(wast)
   return Export(name, internalname, typ)
 end
 
+function memory(wast)
+  if length(wast) == 3
+    name = Symbol(wast[2][2:end])
+    min = parse(UInt32, wast[3])
+  else
+    name = Symbol()
+    min = parse(UInt32, wast[2])
+  end
+  return Mem(name, min, Void())
+end
+
 function module_items(m, wast)
-  p = wast[1] isa String ? wast[1] : wast[1][1]
+  p = wast[1] isa String || wast[1] isa SubString{String} ? wast[1] : wast[1][1]
   p == "func"   && push!(m.funcs,   func(wast))
   p == "export" && push!(m.exports, export_(wast))
+  p == "memory" && push!(m.mems, memory(wast))
   return m
 end
 
 function module_(wast)
   m = WebAssembly.Module([], [], [], [], [], [], [], Ref(0), [], [])
-  return reduce(module_items, m, wast[2:end])
+  reduce(module_items, m, wast[2:end])
+
+  for mem in m.mems
+    push!(m.data, Data(0, 0, zeros(UInt8, 65536 * mem.min)))
+  end
+  return m
 end

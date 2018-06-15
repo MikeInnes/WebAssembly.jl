@@ -1,9 +1,9 @@
-function interpretwasm(f::Func, fs, args)
+function interpretwasm(f::Func, s, args)
   params = [convert(jltype(typ), arg) for (typ, arg) in zip(f.params, args)]
   locals = [convert(jltype(typ), 0) for typ in f.locals]
   ms = vcat(params, locals)
-
-  apInstr(f.body, ms, 0, fs)
+  # @show s
+  apInstr(f.body, ms, s, 0)
 
   returns = popn!(ms, length(f.returns))
 
@@ -17,26 +17,34 @@ function interpretwasm(f::Func, fs, args)
   return returns
 end
 
-function toFunction(f::Func, fs)
-  return ((args...) -> interpretwasm(f, fs, args))
+# Will eventually be support for more memory, but I don't think it matters
+# in the short term.
+struct ModuleState
+  fs :: Dict{Symbol, Tuple{Int, Function}}
+  data :: Data
+end
+
+function emptyModuleState()
+  ModuleState(Dict(), Data(0,0,[]))
+end
+
+function toFunction(f::Func, s)
+  return ((args...) -> interpretwasm(f, s, args))
 end
 
 function interpret_module(m::Module)
-  d = Dict()
-  [(g = toFunction(f, d); d[f.name] = (length(f.params), g); g) for f in m.funcs]
+  s = ModuleState(Dict(), isempty(m.data) ? Data(0,0,[]) : m.data[1])
+  [(g = toFunction(f, s); s.fs[f.name] = (length(f.params), g); g) for f in m.funcs]
 end
 
 
-function runBody(body, ms, level, fs)
+function runBody(body, ms, s, level)
   for i in body
-    if typeof(i) in [Branch, Return]
-      level_ = apInstr(i, ms, level + 1)
+    if typeof(i) in [If, Block, Loop, Branch, Return]
+      level_ = apInstr(i, ms, s, level + 1)
       level_ <= level && return level_
-    elseif typeof(i) in [If, Block, Loop]
-      level_ = apInstr(i, ms, level + 1, fs)
-      level_ <= level && return level_
-    elseif i isa Call
-      apInstr(i, ms, level + 1, fs)
+    elseif typeof(i) in [Call, Op]
+      apInstr(i, ms, s)
     else
       apInstr(i, ms)
     end
@@ -44,12 +52,20 @@ function runBody(body, ms, level, fs)
   return level
 end
 
+function load(ms, s, i)
+  ptr = pop!(ms)
+  num = i.typ == i32 ? 4 : 8
+  typ = jltype(i.typ)
+  res = reinterpret(typ, s.data.data[ptr + 1:ptr + num])[1]
+  push!(ms, res)
+end
+
 function popn!(xs, n)
   len = length(xs)
   return splice!(xs, len - n + 1:len)
 end
 
-apN(n, f) = ms -> push!(ms, f(popn!(ms, n)...))
+apN(n, f) = (ms, s, i) -> push!(ms, f(popn!(ms, n)...))
 
 # Functions to fix true -> 1 and false -> 0, but that's the case anyway
 # function MComp(comparator)
@@ -68,7 +84,7 @@ resign(x::UInt32) = reinterpret(Int32, x)
 unsign(x) = x
 resign(x) = x
 
-apN_U(n, f) = ms -> push!(ms, resign(f(unsign(popn!(ms, n))...)))
+apN_U(n, f) = (ms, s, i) -> push!(ms, resign(f(unsign(popn!(ms, n))...)))
 
 operations =
   Dict(:lt_s   => apN(2, <)
@@ -92,6 +108,7 @@ operations =
       ,:rem_u  => apN_U(2, rem)
       ,:div_s  => apN(2, div)
       ,:div_u  => apN_U(2, div)
+      ,:load   => load
       )
 
 # Level Agnostic Functions
@@ -101,7 +118,8 @@ apInstr(i::Local,       ms) = push!(ms,ms[i.id + 1]);
 apInstr(i::Const,       ms) = push!(ms,value(i));
 apInstr(i::Unreachable, ms) = error("Unreachable")
 apInstr(i::Convert,     ms) = push!(ms, convert(jltype(i.to), float(pop!(ms))))
-apInstr(i::Op,          ms) = operations[i.name](ms)
+
+apInstr(i::Op,          ms, s) = operations[i.name](ms, s, i)
 
 # apInstr(i::SetLocal,    ms) = i.id + 1 == length(ms) ? ms[i.id + 1] = i.tee ? last(ms) : pop!(ms) : ms
 apInstr(i::SetLocal,    ms) = ms[i.id + 1] = i.tee ? last(ms) : pop!(ms)
@@ -116,19 +134,19 @@ end
 
 # Level Based Functions
 
-apInstr(i::Return, ms, l) = 0
-apInstr(i::Branch, ms, l) = i.cond && pop!(ms) != 0 || !i.cond ? l - i.level - 1 : l
+apInstr(i::Return, ms, s, l) = 0
+apInstr(i::Branch, ms, s, l) = i.cond && pop!(ms) != 0 || !i.cond ? l - i.level - 1 : l
 
 # Instructions dependent on in scope functions
 
-apInstr(i::Call,   ms, l, fs) = (f = fs[i.name]; push!(ms, f[2]((popn!(ms, f[1]))...)...))
+apInstr(i::Call,   ms, s) = (f = s.fs[i.name]; push!(ms, f[2]((popn!(ms, f[1]))...)...))
 
-apInstr(i::If,     ms, l, fs) = pop!(ms) != 0 ? runBody(i.t, ms, l, fs) : runBody(i.f, ms, l, fs)
-apInstr(i::Block,  ms, l, fs) = runBody(i.body, ms, l, fs)
-function apInstr(loop::Loop, ms, level, fs)
+apInstr(i::If,     ms, s, l) = pop!(ms) != 0 ? runBody(i.t, ms, s, l) : runBody(i.f, ms, s, l)
+apInstr(i::Block,  ms, s, l) = runBody(i.body, ms, s, l)
+function apInstr(loop::Loop, ms, s, level)
   level_ = level
   while level_ == level
-    level_ = runBody(loop.body, ms, level, fs)
+    level_ = runBody(loop.body, ms, s, level)
   end
   return level_
 end
