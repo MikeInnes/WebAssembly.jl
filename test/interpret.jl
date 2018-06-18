@@ -122,6 +122,10 @@ function rand_test_module(fs, m, n_tests = 50, max = 10)
   return true
 end
 
+flatten(c::Complex{Int64}) = reinterpret(UInt8, [c.re, c.im])
+
+inflate(::Type{T}, bytes) where T <: Complex{Int64} = Complex(reinterpret(Int64, bytes)...)
+
 @testset "Parse-Interpret" begin
 
 relu_wasm = relu_ifelse_wast
@@ -232,5 +236,24 @@ for i in 1:10000
   int_array[i] = i
 end
 @test sum_(0, 10000)[1] == sum(int_array)
+
+m4 = parsewast("test/wast/modules/complex.wast")
+
+@test m4.exports == [Export(:mem, :main, :memory), Export(:complexadd, :complexadd, :func)]
+@test length(m4.data[1].data) == 65536 * 1
+
+memory = m4.data[1].data
+c1 = Complex(10,2)
+c2 = Complex(5,600)
+memory[1:16] = flatten(c1)
+memory[17:32] = flatten(c2)
+
+fs = interpret_module(m4)
+complexadd = fs[2]
+
+# Pointers in WASM are 0 based.
+complexadd(Int32[0, 16, 32]...)
+
+@test c1 + c2 == inflate(Complex{Int64}, memory[33:49])
 
 end

@@ -60,6 +60,13 @@ function load(ms, s, i)
   push!(ms, res)
 end
 
+function store(ms, s, i)
+  ptr, val = popn!(ms, 2)
+  num = i.typ == i32 ? 4 : 8
+  typ = jltype(i.typ)
+  s.data.data[ptr + 1:ptr + num] = reinterpret(UInt8, [val])
+end
+
 function popn!(xs, n)
   len = length(xs)
   return splice!(xs, len - n + 1:len)
@@ -109,6 +116,7 @@ operations =
       ,:div_s  => apN(2, div)
       ,:div_u  => apN_U(2, div)
       ,:load   => load
+      ,:store  => store
       )
 
 # Level Agnostic Functions
