@@ -253,10 +253,20 @@ end
 
 function Base.show(io::IO, m::Module)
   print(io, "(module")
+
+  # For the time being shoving the allocate/deallocate functions in at the
+  # beginning of the file, should become a more natural part of the modules in
+  # the future.
+
+  println(io, "\n\n  ;; base.wast\n")
+  print(io, getFileString("WebAssembly/src/base.wast"))
+
+  println(io, "\n  ;; Compiler output")
   foreach(p -> printwasm(io, p, 1), m.imports)
   foreach(p -> printwasm(io, p, 1), m.exports)
   foreach(p -> printwasm(io, p, 1), m.mems)
   foreach(p -> printwasm(io, p, 1), m.data)
   foreach(p -> printwasm(io, p, 1), m.funcs)
+
   print(io, ")")
 end
