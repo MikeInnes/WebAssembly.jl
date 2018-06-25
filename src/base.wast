@@ -42,6 +42,33 @@
       unreachable
     end
     return)
+  (func $~lib/array/Array<i64>#__set (param $p0 i32) (param i64) (param $p1 i32) (result i64)
+    (local $l0 i32)
+    get_local $p0
+    i32.load
+    set_local $l0
+    get_local $p1
+    get_local $l0
+    i32.load
+    i32.const 3
+    i32.shr_u
+    i32.lt_u
+    if $I0 (result i64)
+      block $B1 (result i64)
+        get_local $l0
+        get_local $p1
+        i32.const 3
+        i32.shl
+        i32.add
+        (get_local 1)
+        i64.store offset=8
+        (get_local 1)
+        br $B1
+      end
+    else
+      unreachable
+    end
+    return)
   (func $~lib/array/Array<u32>#__get (param i32 i64) (result i32)
     (local i32) (local i32)
     (get_local 1)
@@ -751,5 +778,16 @@
     (i32.const 1)
     (i32.sub)
     (call $~lib/array/Array<i64>#__get)
+    (return)
+  )
+
+  (func $arrayset_i64 (param i32) (param i64) (param i64) (result i64)
+    (get_local 0)
+    (get_local 1)
+    (get_local 2)
+    (i32.wrap/i64)
+    (i32.const 1)
+    (i32.sub)
+    (call $~lib/array/Array<i64>#__set)
     (return)
   )
