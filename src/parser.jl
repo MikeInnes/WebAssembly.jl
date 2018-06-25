@@ -30,6 +30,13 @@ function pb(s, i)
   return (result, j)
 end
 
+function parse(wast)
+  p = wast[1] isa String ? wast[1] : wast[1][1]
+  p == "func"   && return func(wast)
+  p == "module" && return module_(wast)
+end
+
+
 rmLayer(xs::Array) = length(xs) == 1 ? xs[1] : xs
 
 # Split strings, remove white space and excess nestings of arrays.
