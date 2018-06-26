@@ -15,6 +15,7 @@ include("looper.jl")
 include("io.jl")
 include("parser.jl")
 include("interpret.jl")
+include("bytecode.jl")
 
 module Instructions
 
