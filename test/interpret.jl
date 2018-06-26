@@ -128,7 +128,7 @@ inflate(::Type{T}, bytes) where T <: Complex{Int64} = Complex(reinterpret(Int64,
 
 @testset "Parse-Interpret" begin
 
-relu_wasm = relu_ifelse_wast
+relu_wasm = relu_ifelse_wasm
 
 relu_wasm_expected = Func(Symbol("#relu_Int64"), [i64], [i64], [], Block([Const(0), Local(0), Local(0), Const(0), Op(i64, :lt_s), Select(), Return()]))
 @test relu_wasm.body.body == relu_wasm_expected.body.body
@@ -222,7 +222,42 @@ m2 = wast"""
 @test m2.exports == [Export(:this, Symbol("#this_Int64"), :func), Export(:pow, Symbol("#pow_Int64_Int64"), :func), Export(:fib, Symbol("#fib_Int64"), :func)]
 @test rand_test_module([fib, this, pow], m2)
 
-m3 = parsewast("test/wast/modules/sum.wast")
+m3 = wast"""
+(module
+  (export "mem" (memory $main))
+  (export "sum" (func $sum))
+  (memory $main 10)
+  (func $sum (param i32) (param i32) (result i32)
+    (local i32)
+    (local i32)
+    (i32.const 4)
+    (get_local 1)
+    (i32.mul)
+    (get_local 0)
+    (i32.add)
+    (set_local 2)
+    (block
+      (loop
+        (get_local 0)
+        (get_local 2)
+        (i32.eq)
+        (br_if 1)
+        (get_local 0)
+        (i32.load)
+        (get_local 3)
+        (i32.add)
+        (set_local 3)
+        (i32.const 4)
+        (get_local 0)
+        (i32.add)
+        (set_local 0)
+        (br 0)
+      )
+    )
+  (get_local 3)
+  )
+)
+"""
 
 @test m3.exports == [Export(:mem, :main, :memory), Export(:sum, :sum, :func)]
 @test length(m3.data[1].data) == 65536 * 10
@@ -237,7 +272,42 @@ for i in 1:10000
 end
 @test sum_(0, 10000)[1] == sum(int_array)
 
-m4 = parsewast("test/wast/modules/complex.wast")
+m4 = wast"""
+(module
+  (export "mem" (memory $main))
+  (export "complexadd" (func $complexadd))
+  (memory $main 1)
+  (func $inc_ptr_64 (param i32) (result i32)
+    (get_local 0)
+    (i32.const 8)
+    (i32.add)
+    (return)
+  )
+  (func $complexadd (param i32) (param i32) (param i32) (result i32)
+    (get_local 2)
+    (get_local 0)
+    (i64.load)
+    (get_local 1)
+    (i64.load)
+    (i64.add)
+    (i64.store)
+
+    (get_local 2)
+    (call $inc_ptr_64)
+    (get_local 0)
+    (call $inc_ptr_64)
+    (i64.load)
+    (get_local 1)
+    (call $inc_ptr_64)
+    (i64.load)
+    (i64.add)
+    (i64.store)
+    (get_local 2)
+
+    (return)
+  )
+)
+"""
 
 @test m4.exports == [Export(:mem, :main, :memory), Export(:complexadd, :complexadd, :func)]
 @test length(m4.data[1].data) == 65536 * 1
