@@ -21,8 +21,8 @@ using WebAssembly: fromLeb128, toLeb128
 @test fromLeb128(toLeb128( 0), Int8) == 0
 @test fromLeb128(toLeb128(UInt8(0)), UInt8) == 0
 
+pass = true
 for t ∈ [Int8, UInt8, Int16, UInt16, Int32, UInt32, Int64, UInt64, Int128, UInt128]
-  pass = true
   for i in 1:100
     x = rand(t)
     if !(fromLeb128((toLeb128(x)), t) == x) || !(fromLeb128((toLeb128(x))) == x)
@@ -30,8 +30,15 @@ for t ∈ [Int8, UInt8, Int16, UInt16, Int32, UInt32, Int64, UInt64, Int128, UIn
       break
     end
   end
-  @test pass
 end
+@test pass
+
+# Make sure the number of bytes used to store is within spec.
+@test length(toLeb128(typemax(UInt32))) <= ceil(32/7)
+@test length(toLeb128(typemax(Int32))) <= ceil(32/7)
+@test length(toLeb128(typemin(Int32))) <= ceil(32/7)
+@test length(toLeb128(true)) <= ceil(1/7)
+# @test length(toLeb128(0x7F)) <= ceil(7/7)
 
 end
 

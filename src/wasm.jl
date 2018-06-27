@@ -86,7 +86,8 @@ struct Unreachable <: Instruction end
 const unreachable = Unreachable()
 
 struct FuncType
-  # TODO
+  params::Vector{WType}
+  returns::Vector{WType}
 end
 
 struct Func
