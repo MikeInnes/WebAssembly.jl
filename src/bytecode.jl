@@ -173,7 +173,7 @@ function readExports(i, bs, exports)
   return i
 end
 
-function readBodies(i, bs, bodies)
+function readBodies(i, bs, bodies, func_names)
   i, count = readLeb128(i, bs)
   for j in 1:count
     i, body_size = readLeb128(i, bs)
@@ -184,7 +184,7 @@ function readBodies(i, bs, bodies)
       i, typ = i + 1, types_r[bs[i]]
       push!(locals, fill(typ, count)...)
     end
-    i, body = readBody(i, bs, true)
+    i, body = readBody(i, bs, func_names, true)
     block = Block(body)
     push!(bodies, (locals, block))
     # @show block
@@ -193,20 +193,15 @@ function readBodies(i, bs, bodies)
   return i
 end
 
-function readFuncTypes(i, bs, func_types, names)
+function readFuncTypes(i, bs, func_types, names, func_names)
   i, count = readLeb128(i, bs, UInt32)
   for j in 0:count-1
-    i, val = readLeb128(i, bs, typ)
-    name = if haskey(names, j)
-      names[j]
-    else
-      s = Symbol("func_$j")
-      push!(names, j => s)
-      s
-    end
-    push!(func_types, (val, name))
+    i, val = readLeb128(i, bs, UInt32)
+    name = haskey(names, j) ? names[j] : Symbol("func_$j")
+    push!(func_types, val)
+    push!(func_names, name)
   end
-  return i, values
+  return i
 end
 
 function readModule(bs)
@@ -217,12 +212,13 @@ function readModule(bs)
   id = id_ = -1
 
   types = Vector{Tuple{Vector{WType}, Vector{WType}}}()
-  func_types = Vector{Tuple{UInt32, Symbol}}()
+  func_types = Vector{UInt32}()
   exports = Vector{Tuple{Symbol, Symbol, Int}}()
   memory = Vector{Tuple{UInt32, Union{UInt32, Void}}}()
   bodies = Vector{Tuple{Vector{WType}, Block}}()
   # A dictionary from int to name for each index space.
-  names = Dict{Symbol, Dict}(:func => Dict{Int, Symbol}())
+  names = Dict{Symbol, Dict}(:func => Dict{UInt32, Symbol}())
+  func_names = Vector{Symbol}()
   while id < 10
     i, id = readLeb128(i, bs)
     id > id_ || error("Sections must be in increasing order.")
@@ -231,14 +227,16 @@ function readModule(bs)
     if id == 1 # Types
       i = readTypes(i, bs, types)
     elseif id == 3 # Functions
-      i = readFuncTypes(i, bs, func_types, names)
+      i = readFuncTypes(i, bs, func_types, names, func_names)
+      @show func_types
     elseif id == 5 # Memory
       i = readMemory(i, bs, memory)
     elseif id == 7 # Exports
       i = readExports(i, bs, exports)
     elseif id == 10 # Bodies
-      i = readBodies(i, bs, bodies)
+      i = readBodies(i, bs, bodies, func_names)
       length(bodies) == length(func_types) || error("Number of function types and function bodies does not match.")
+      @show bodies
     else
       error("Unknown Section")
     end
@@ -284,30 +282,29 @@ function getBytes(i, bs)
   return j, bs[i:j-1]
 end
 
-function readBody(i, bs, else_=false)
+function readBody(i, bs, fns, else_=false)
   is = Vector{Instruction}()
   # The haskey check seems risky but not all code seems to bother with the 0x40
   # i, result = else_ || !haskey(types_r, bs[i]) ? (i, Void()) : (i + 1, types_r[bs[i]])
-  @show haskey(opcodes_r, bs[i]) ? opcodes_r[bs[i]] : types_r[bs[i]]
   i, result = else_ ? (i, Void()) : (i + 1, types_r[bs[i]])
   while (bs[i] != opcodes[:end]) && (bs[i] != opcodes[:else])
-    i, op = readOp(opcodes_r[bs[i]], i, bs) :: Tuple{Int64, Instruction}
+    i, op = readOp(opcodes_r[bs[i]], i, bs, fns) :: Tuple{Int64, Instruction}
     push!(is, op)
   end
   return (i + 1, is, result)
 end
 
-function readOp(block :: DataType, i, bs)
-  (i, is, r) = readBody(i + 1, bs)
+function readOp(block :: DataType, i, bs, fns)
+  (i, is, r) = readBody(i + 1, bs, fns)
   if block == If
-    (i, f, _) = readBody(i, bs, true)
+    (i, f, _) = readBody(i, bs, fns, true)
     return i, If(is, f, r)
   else
     return i, block(is, r)
   end
 end
 
-readOp(x::WebAssembly.Instruction, i, bs) = i+1, x
+readOp(x::WebAssembly.Instruction, i, bs, fns) = i+1, x
 
 # byte_op(i :: Local, _)     = vcat(opcodes[(Local,)], toLeb128(i.id))
 # byte_op(i :: SetLocal, _)  = vcat(opcodes[SetLocal, i.tee], toLeb128(i.id))
@@ -316,7 +313,7 @@ readOp(x::WebAssembly.Instruction, i, bs) = i+1, x
 # byte_op(i :: Call, f_ids)  = vcat(opcodes[(Call,)], toLeb128(f_ids[i.name]))
 # readOp(x::WebAssembly.Instruction, i, bs) = i+1, x
 
-function readOp(x :: Tuple{DataType, T}, i, bs) where T
+function readOp(x :: Tuple{DataType, T}, i, bs, fns) where T
   i = i +1
   if x[1] == Const
     i, arg = readLeb128(i, bs, jltype(x[2][1]))
@@ -324,7 +321,7 @@ function readOp(x :: Tuple{DataType, T}, i, bs) where T
     return i, Const(arg)
   end
   i, arg = readLeb128(i, bs)
-  x[1] == Call && return i, Nop()
+  x[1] == Call && return i, Call(fns[arg + 1])
   return (i, x[1](x[2]...,arg))
 end
 
