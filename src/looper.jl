@@ -86,8 +86,8 @@ branches(x, label, level) = x
 branches(x::Goto, label, level) =
   x.label == label ? Branch(x.cond, level) : x
 
-branches(x::Block, label, level) = Block(branches.(x.body, label, level+1))
-branches(x::Loop, label, level)  = Loop(branches.(x.body, label, level+1))
+branches(x::Block, label, level) = Block(branches.(x.body, label, level+1), x.result)
+branches(x::Loop, label, level)  = Loop(branches.(x.body, label, level+1), x.result)
 
 function insertjump(is, j)
   body = is[jrange(j)]
@@ -101,5 +101,5 @@ insertjumps(is, js) = reduce(insertjump, is, reverse(js))
 function restructure(b::Block)
   is = striplabels(b.body)
   js = is |> jumps |> resolve!
-  insertjumps(is, js) |> Block |> nops
+  Block(insertjumps(is, js), b.result) |> nops
 end

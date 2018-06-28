@@ -63,20 +63,15 @@ getFunctionBodies(m, f_ids) = length(m.funcs), [addLength(vcat(toBytes((length(f
 
 bodyToBytes(is, f_ids) = Vector{UInt8}(vcat([byte_op(i, f_ids) for i in is]...)) :: Vector{UInt8}
 
-byte_op(i :: Local, f_ids) = UInt8[0x20, i.id]
-byte_op(i :: SetLocal, f_ids) = UInt8[i.tee ? 0x22 : 0x21, i.id]
-byte_op(i :: Const, f_ids) = UInt8[opcodes[Const, i.typ], toLeb128(i.val)...]
-# byte_op(i :: Op, f_ids) = opcodes[i.typ][i.name]
-byte_op(i :: If, f_ids) = vcat(0x04, 0x40, bodyToBytes(i.t, f_ids), 0x05, bodyToBytes(i.f, f_ids), 0x0b)
-byte_op(i :: Block, f_ids) = vcat(0x02, 0x40, bodyToBytes(i.body, f_ids), 0x0b)
-byte_op(i :: Loop, f_ids) = vcat(0x03, 0x40, bodyToBytes(i.body, f_ids), 0x0b)
-byte_op(i :: Branch, f_ids) = vcat(i.cond ? 0x0d : 0x0c, toLeb128(i.level))
-byte_op(i :: Return, f_ids) = 0x0f
-byte_op(i :: Select, f_ids) = 0x1b
-byte_op(i :: Unreachable, f_ids) = 0x00
-byte_op(i :: Nop, f_ids) = 0x01
-byte_op(i :: Call, f_ids) = vcat(0x10, toLeb128(f_ids[i.name]))
-byte_op(i :: Union{Op, Convert}, f_ids) = opcodes[i]#conversions[i.to, i.name, i.from]
+byte_op(i :: Local, _)     = vcat(opcodes[Local,()], toLeb128(i.id))
+byte_op(i :: SetLocal, _)  = vcat(opcodes[SetLocal, (i.tee,)], toLeb128(i.id))
+byte_op(i :: Const, _)     = vcat(opcodes[Const, (i.typ,)], toLeb128(i.val))
+byte_op(i :: If, f_ids)    = vcat(opcodes[If], types[i.result], bodyToBytes(i.t, f_ids), opcodes[:else], bodyToBytes(i.f, f_ids), opcodes[:end])
+byte_op(i :: Block, f_ids) = vcat(opcodes[Block], types[i.result], bodyToBytes(i.body, f_ids), opcodes[:end])
+byte_op(i :: Loop, f_ids)  = vcat(opcodes[Loop], types[i.result], bodyToBytes(i.body, f_ids), opcodes[:end])
+byte_op(i :: Branch, _)    = vcat(opcodes[Branch, (i.cond,)], toLeb128(i.level))
+byte_op(i :: Call, f_ids)  = vcat(opcodes[Call,()], toLeb128(f_ids[i.name]))
+byte_op(i :: T, _) where T <: Instruction = opcodes[i]
 
 const external_kind =
   Dict(
@@ -120,14 +115,14 @@ end
 
 # Currently assuming the arrays always have the form length of array followed by
 # the array, same for strings.
-addLength(xs :: Vector{UInt8}) = vcat(toBytes(length(xs)), xs) :: Vector{UInt8}
+addLength(xs :: Vector{UInt8}) = vcat(toBytes(length(xs)), xs)
 
 toBytes(xs :: Vector{UInt8}) = xs
-toBytes(xs :: Union{Array, Tuple}) = Vector{UInt8}(vcat(map(toBytes, xs)...))
+toBytes(xs :: Union{Array, Tuple}) = isempty(xs) ? Vector{UInt8}() : vcat((map(toBytes, xs))...)
 # toBytes(xs :: Tuple) = unshift!(collect(Iterators.flatten([toBytes(x) for x in xs])), toBytes(length(xs))...)
-toBytes(xs :: Union{String, Symbol}) = addLength(utf8(xs)) :: Vector{UInt8}
-toBytes(x :: Integer) = toLeb128(x) :: Vector{UInt8}
-toBytes(x :: WType) = types[x] :: UInt8
+toBytes(xs :: Union{String, Symbol}) = addLength(utf8(xs))
+toBytes(x :: Integer) = toLeb128(x)
+toBytes(x :: WType) = types[x]
 # toBytes(i :: Local) =
 
 #### Read a bytecode file
@@ -139,8 +134,82 @@ function getByteFile(filename)
   return bs
 end
 
-function readModule(filename)
-  bs = getByteFile(filename)
+loadReadModule(filename) = filename |> getByteFile |> readModule
+
+function readTypes(i, bs, types)
+  i, count = readLeb128(i, bs)
+  for j in 1:count
+    i, form = readLeb128(i, bs, Int8)
+    form == -32 || error("Not a valid function")
+    i, params = getRegisters(i, bs)
+    i, returns = getRegisters(i, bs)
+    push!(types, (params, returns))
+  end
+  return i
+end
+
+function readMemory(i, bs, memory)
+  i, count = readLeb128(i, bs, UInt32)
+  for j = 1:count
+    i, flag = readLeb128(i, bs, UInt8)
+    i, initial = readLeb128(i, bs, UInt32)
+    maximum = Void()
+    if flag == 0x01
+      i, maximum = readLeb128(i,bs,UInt32)
+    end
+    push!(memory, (initial, maximum))
+  end
+  return i
+end
+
+function readExports(i, bs, exports)
+  i, count = readLeb128(i, bs, UInt32)
+  for j in 1:count
+    i, name = readsymbol(i, bs)
+    i, kind = i + 1, external_kind_r[bs[i]]
+    i, index = readLeb128(i, bs, UInt32)
+    push!(exports, (name, kind, index))
+  end
+  return i
+end
+
+function readBodies(i, bs, bodies)
+  i, count = readLeb128(i, bs)
+  for j in 1:count
+    i, body_size = readLeb128(i, bs)
+    i, local_entry_count = readLeb128(i, bs)
+    locals = Vector{WType}()
+    for k in 1:local_entry_count
+      i, count = readLeb128(i, bs)
+      i, typ = i + 1, types_r[bs[i]]
+      push!(locals, fill(typ, count)...)
+    end
+    i, body = readBody(i, bs, true)
+    block = Block(body)
+    push!(bodies, (locals, block))
+    # @show block
+    # @show locals
+  end
+  return i
+end
+
+function readFuncTypes(i, bs, func_types, names)
+  i, count = readLeb128(i, bs, UInt32)
+  for j in 0:count-1
+    i, val = readLeb128(i, bs, typ)
+    name = if haskey(names, j)
+      names[j]
+    else
+      s = Symbol("func_$j")
+      push!(names, j => s)
+      s
+    end
+    push!(func_types, (val, name))
+  end
+  return i, values
+end
+
+function readModule(bs)
   if bs[1:length(preamble)] != preamble
     error("Something wrong with preamble. Version 1 only.")
   end
@@ -148,65 +217,42 @@ function readModule(filename)
   id = id_ = -1
 
   types = Vector{Tuple{Vector{WType}, Vector{WType}}}()
-  func_types = Vector{UInt32}()
+  func_types = Vector{Tuple{UInt32, Symbol}}()
   exports = Vector{Tuple{Symbol, Symbol, Int}}()
   memory = Vector{Tuple{UInt32, Union{UInt32, Void}}}()
-  while id < 7
+  bodies = Vector{Tuple{Vector{WType}, Block}}()
+  # A dictionary from int to name for each index space.
+  names = Dict{Symbol, Dict}(:func => Dict{Int, Symbol}())
+  while id < 10
     i, id = readLeb128(i, bs)
     id > id_ || error("Sections must be in increasing order.")
     i, payload_len = readLeb128(i, bs)
 
-    @show id
     if id == 1 # Types
-      i, count = readLeb128(i, bs)
-      for j in 1:count
-        i, form = readLeb128(i, bs, Int8)
-        @show form
-        form == -32 || error("Not a valid function")
-        i, params = getRegisters(i, bs)
-        i, returns = getRegisters(i, bs)
-        push!(types, (params, returns))
-      end
+      i = readTypes(i, bs, types)
     elseif id == 3 # Functions
-      i, func_types = getArray(i, bs, UInt32)
-    elseif id == 5
-      i, count = readLeb128(i, bs, UInt32)
-      i, flag = readLeb128(i, bs, UInt8)
-      i, initial = readLeb128(i, bs, UInt32)
-      maximum = Void()
-      if flag == 0x01
-        i, maximum = readLeb128(i,bs,UInt32)
-      end
-      push!(memory, (initial, maximum))
+      i = readFuncTypes(i, bs, func_types, names)
+    elseif id == 5 # Memory
+      i = readMemory(i, bs, memory)
     elseif id == 7 # Exports
-      i, count = readLeb128(i, bs, UInt32)
-      for j in 1:count
-        i, name = readsymbol(i, bs)
-        i, kind = i + 1, external_kind_r[bs[i]]
-        i, index = readLeb128(i, bs, UInt32)
-        push!(exports, (name, kind, index))
-      end
-    # elseif id == 10
-      # i, cound = readLeb
+      i = readExports(i, bs, exports)
+    elseif id == 10 # Bodies
+      i = readBodies(i, bs, bodies)
+      length(bodies) == length(func_types) || error("Number of function types and function bodies does not match.")
+    else
+      error("Unknown Section")
     end
-
-
-
-
-
   end
   return types, func_types, exports, memory
 end
 
 function getRegisters(i, bs)
   i, regs = getBytes(i, bs)
-  @show regs
   return i, map(b -> types_r[b], regs)
 end
 
-function getArray(i, bs, typ)
+function getArray(i, bs, typ, values=Vector{typ}())
   i, count = readLeb128(i, bs, UInt32)
-  values = Vector{typ}()
   for j in 1:count
     i, val = readLeb128(i, bs, typ)
     push!(values, val)
@@ -238,22 +284,103 @@ function getBytes(i, bs)
   return j, bs[i:j-1]
 end
 
+function readBody(i, bs, else_=false)
+  is = Vector{Instruction}()
+  # The haskey check seems risky but not all code seems to bother with the 0x40
+  # i, result = else_ || !haskey(types_r, bs[i]) ? (i, Void()) : (i + 1, types_r[bs[i]])
+  @show haskey(opcodes_r, bs[i]) ? opcodes_r[bs[i]] : types_r[bs[i]]
+  i, result = else_ ? (i, Void()) : (i + 1, types_r[bs[i]])
+  while (bs[i] != opcodes[:end]) && (bs[i] != opcodes[:else])
+    i, op = readOp(opcodes_r[bs[i]], i, bs) :: Tuple{Int64, Instruction}
+    push!(is, op)
+  end
+  return (i + 1, is, result)
+end
+
+function readOp(block :: DataType, i, bs)
+  (i, is, r) = readBody(i + 1, bs)
+  if block == If
+    (i, f, _) = readBody(i, bs, true)
+    return i, If(is, f, r)
+  else
+    return i, block(is, r)
+  end
+end
+
+readOp(x::WebAssembly.Instruction, i, bs) = i+1, x
+
+# byte_op(i :: Local, _)     = vcat(opcodes[(Local,)], toLeb128(i.id))
+# byte_op(i :: SetLocal, _)  = vcat(opcodes[SetLocal, i.tee], toLeb128(i.id))
+# byte_op(i :: Const, _)     = vcat(opcodes[Const, i.typ], toLeb128(i.val))
+# byte_op(i :: Branch, _)    = vcat(opcodes[Branch, i.cond], toLeb128(i.level))
+# byte_op(i :: Call, f_ids)  = vcat(opcodes[(Call,)], toLeb128(f_ids[i.name]))
+# readOp(x::WebAssembly.Instruction, i, bs) = i+1, x
+
+function readOp(x :: Tuple{DataType, T}, i, bs) where T
+  i = i +1
+  if x[1] == Const
+    i, arg = readLeb128(i, bs, jltype(x[2][1]))
+    @show arg
+    return i, Const(arg)
+  end
+  i, arg = readLeb128(i, bs)
+  x[1] == Call && return i, Nop()
+  return (i, x[1](x[2]...,arg))
+end
+
+function readOp(x, i, bs)
+  @show x
+  if x isa Tuple && x[1] isa Call
+    i, arg = readLeb128(i, bs)
+    @show arg
+  end
+  i + 1, Nop()
+end
+
+    # if haskey(opcodes_r, bs[i])
+    #   push!()
+
 const types =
   Dict(
     i32 => 0x7f,
     i64 => 0x7e,
     f32 => 0x7d,
-    f64 => 0x7c
+    f64 => 0x7c,
+    Void() => 0x40
   )
 
 const types_r = map(reverse, types)
 
-opcodes =
+const opcodes =
   Dict(
-    (Const, i32)  =>  0x41,
-    (Const, i64)  =>	0x42,
-    (Const, f32)  =>  0x43,
-    (Const, f64)  =>  0x44,
+
+    Return()      => 0x0f,
+    Select()      => 0x1b,
+    Unreachable() => 0x00,
+    Nop()         => 0x01,
+
+
+
+    (Local,()) => 0x20,
+
+    (SetLocal, (true,))  => 0x22,
+    (SetLocal, (false,)) => 0x21,
+
+    (Const, (i32,))  =>  0x41,
+    (Const, (i64,))  =>	0x42,
+    (Const, (f32,))  =>  0x43,
+    (Const, (f64,))  =>  0x44,
+
+    (Branch, (true,))  => 0x0d,
+    (Branch, (false,)) => 0x0c,
+
+    (Call,()) => 0x10,
+
+    If    => 0x04,
+    :else    => 0x05,
+    :end     => 0x0b,
+    Block => 0x02,
+    Loop  => 0x03,
 
     Op(i32, :eqz)	   =>  0x45,
     Op(i32, :eq)	   =>  0x46,
