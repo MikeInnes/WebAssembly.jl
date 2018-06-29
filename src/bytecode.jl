@@ -137,72 +137,62 @@ end
 loadReadModule(filename) = filename |> getByteFile |> readModule
 
 function readTypes(i, bs, types)
-  i, count = readLeb128(i, bs)
-  for j in 1:count
+  readArray(i, bs, types) do i, bs
     i, form = readLeb128(i, bs, Int8)
     form == -32 || error("Not a valid function")
     i, params = getRegisters(i, bs)
     i, returns = getRegisters(i, bs)
-    push!(types, (params, returns))
+    return i, (params, returns)
   end
-  return i
 end
 
 function readMemory(i, bs, memory)
-  i, count = readLeb128(i, bs, UInt32)
-  for j = 1:count
+  readArray(i, bs, memory) do i, bs
     i, flag = readLeb128(i, bs, UInt8)
     i, initial = readLeb128(i, bs, UInt32)
     maximum = Void()
     if flag == 0x01
       i, maximum = readLeb128(i,bs,UInt32)
     end
-    push!(memory, (initial, maximum))
+    return i, (initial, maximum)
   end
-  return i
 end
 
 function readExports(i, bs, exports)
-  i, count = readLeb128(i, bs, UInt32)
-  for j in 1:count
+  readArray(i, bs, exports) do i, bs
     i, name = readsymbol(i, bs)
     i, kind = i + 1, external_kind_r[bs[i]]
     i, index = readLeb128(i, bs, UInt32)
-    push!(exports, (name, kind, index))
+    return i, (name, kind, index)
   end
-  return i
 end
 
 function readBodies(i, bs, bodies, func_names)
-  i, count = readLeb128(i, bs)
-  # @show count
-  for j in 1:count
-    # @show j
+  forCount(i, bs) do i, bs
     i, body_size = readLeb128(i, bs)
-    i, local_entry_count = readLeb128(i, bs)
     locals = Vector{WType}()
+    i, local_entry_count = readLeb128(i, bs)
     for k in 1:local_entry_count
       i, count = readLeb128(i, bs)
       i, typ = i + 1, types_r[bs[i]]
       push!(locals, fill(typ, count)...)
     end
+    # Doesn't work
+    # forCount(i, bs) do i, bs
+    #   i, count = readLeb128(i, bs)
+    #   i, typ = i + 1, types_r[bs[i]]
+    #   push!(locals, fill(typ, count)...)
+    #   return i
+    # end
     i, body = readBody(i, bs, func_names, true)
     block = Block(body)
-    # @show block
     push!(bodies, (locals, block))
-    # @show block
-    # @show locals
+    return i
   end
-  return i
 end
 
 function readFuncTypes(i, bs, func_types)
-  i, count = readLeb128(i, bs, UInt32)
-  for j in 0:count-1
-    i, val = readLeb128(i, bs, UInt32)
-    push!(func_types, val)
-  end
-  return i
+  getArray(i, bs, UInt32, func_types)
 end
 
 function readNameMap(i, bs, names)
@@ -230,8 +220,8 @@ function nameSection(i, bs, names)
   return i
 end
 
-function readModule(bs)
-  if bs[1:length(preamble)] != preamble
+function readModule(io)
+  if read(io, length(preamble)) != preamble
     error("Something wrong with preamble. Version 1 only.")
   end
   i = length(preamble) + 1
@@ -311,13 +301,14 @@ function getRegisters(i, bs)
   return i, map(b -> types_r[b], regs)
 end
 
-function getArray(i, bs, typ, values=Vector{typ}())
+
+function getArray(i, bs, typ, values)
   i, count = readLeb128(i, bs, UInt32)
   for j in 1:count
     i, val = readLeb128(i, bs, typ)
     push!(values, val)
   end
-  return i, values
+  return i
 end
 
 function readLeb128(i, bs, typ=Int32)
@@ -388,6 +379,34 @@ function readOp(x :: Tuple{DataType, T}, i, bs, fns) where T
   x[1] == Call && return i, Call(fns[arg + 1])
   return (i, x[1](x[2]...,arg))
 end
+
+# Given a function for reading an item, read an array of those items.
+# Assumes that the next item to be read is a UInt32 of the length of the array
+# followed by the array itself.
+function readArray(f, i, bs, result)
+  # i, count = readLeb128(i, bs)
+  # for j in 1:count
+  #   i, val = f(i, bs)
+  #   push!(result, val)
+  # end
+  # return i
+  forCount(i, bs) do i, bs
+    i, val = f(i, bs)
+    push!(result, val)
+    return i
+  end
+end
+
+# Repeat an operation the number of times given by the read in count.
+function forCount(f, i, bs)
+  i, count = readLeb128(i, bs, UInt32)
+  for j in 1:count
+    i = f(i, bs)
+  end
+  return i
+end
+
+
 
 # function readOp(x, i, bs)
 #   @show x
