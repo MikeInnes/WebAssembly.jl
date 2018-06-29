@@ -59,26 +59,22 @@ struct Block <: Instruction
   body::Vector{Instruction}
 
   result::Union{WType, Void}
-  Block(body::Vector{T}) where T = new(body, Void())
-  Block(body::Vector{T}, result::Union{WType, Void}) where T = new(body, result)
 end
+Block(body::Vector{T}) where T = Block(body, Void())
 
 struct If <: Instruction
   t::Vector{Instruction}
   f::Vector{Instruction}
 
   result::Union{WType, Void}
-  If(t::Vector{T}, f::Vector{F}) where T where F = new(t, f, Void())
-  If(t::Vector{T}, f::Vector{F}, result::Union{WType, Void}) where T where F = new(t, f, Void())
 end
+If(t,f) = If(t, f, Void())
 
 struct Loop <: Instruction
   body::Vector{Instruction}
   result::Union{WType, Void}
-  
-  Loop(body::Vector{T}) where T = new(body, Void())
-  Loop(body::Vector{T}, result::Union{WType, Void}) where T = new(body, result)
 end
+Loop(body) = Loop(body, Void())
 
 struct Branch <: Instruction
   cond::Bool

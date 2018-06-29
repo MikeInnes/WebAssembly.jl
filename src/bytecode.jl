@@ -248,7 +248,7 @@ function readModule(bs)
   mems  = [Mem(n, m...) for (n, m) in zip(names[:memory], memory)]
   exports = [Export(n, names[is][i+1], is) for (n, is, i) in exports]
 
-  return Module([], funcs, [], mems, [], [], [], Ref(0), [], [])
+  return Module([], funcs, [], mems, [], [], [], Ref(0), [], exports)
 end
 
 function getNames(names, spacelength)
