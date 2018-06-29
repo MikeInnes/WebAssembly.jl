@@ -60,7 +60,7 @@ struct Block <: Instruction
 
   result::Union{WType, Void}
 end
-Block(body::Vector{T}) where T = Block(body, Void())
+Block(body) = Block(body, Void())
 
 struct If <: Instruction
   t::Vector{Instruction}
