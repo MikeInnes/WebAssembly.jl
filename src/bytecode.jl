@@ -63,14 +63,13 @@ getFunctionBodies(m, f_ids) = length(m.funcs), [addLength(vcat(toBytes((length(f
 
 bodyToBytes(is, f_ids) = Vector{UInt8}(vcat([byte_op(i, f_ids) for i in is]...)) :: Vector{UInt8}
 
-byte_op(i :: Local, _)     = vcat(opcodes[Local,()], toLeb128(i.id))
-byte_op(i :: SetLocal, _)  = vcat(opcodes[SetLocal, (i.tee,)], toLeb128(i.id))
-byte_op(i :: Const, _)     = vcat(opcodes[Const, (i.typ,)], toLeb128(i.val))
-byte_op(i :: If, f_ids)    = vcat(opcodes[If], types[i.result], bodyToBytes(i.t, f_ids), opcodes[:else], bodyToBytes(i.f, f_ids), opcodes[:end])
-byte_op(i :: Block, f_ids) = vcat(opcodes[Block], types[i.result], bodyToBytes(i.body, f_ids), opcodes[:end])
-byte_op(i :: Loop, f_ids)  = vcat(opcodes[Loop], types[i.result], bodyToBytes(i.body, f_ids), opcodes[:end])
-byte_op(i :: Branch, _)    = vcat(opcodes[Branch, (i.cond,)], toLeb128(i.level))
 byte_op(i :: Call, f_ids)  = vcat(opcodes[Call,()], toLeb128(f_ids[i.name]))
+byte_op(i :: Local, _)     = vcat(opcodes[Local,()], toLeb128(i.id))
+byte_op(i :: Const, _)     = vcat(opcodes[Const, (i.typ,)], toLeb128(i.val))
+byte_op(i :: Branch, _)    = vcat(opcodes[Branch, (i.cond,)], toLeb128(i.level))
+byte_op(i :: SetLocal, _)  = vcat(opcodes[SetLocal, (i.tee,)], toLeb128(i.id))
+byte_op(i :: If, f_ids)    = vcat(opcodes[If], types[i.result], bodyToBytes(i.t, f_ids), opcodes[:else], bodyToBytes(i.f, f_ids), opcodes[:end])
+byte_op(i :: Union{Block,Loop}, f_ids) = vcat(opcodes[typeof(i)], types[i.result], bodyToBytes(i.body, f_ids), opcodes[:end])
 byte_op(i :: T, _) where T <: Instruction = opcodes[i]
 
 const external_kind =
@@ -148,7 +147,7 @@ function readTypes(i, bs, types)
   return i
 end
 
-function readMemory(i, bs, memory)
+function readMemory(i, bs, memory, names, mem_names)
   i, count = readLeb128(i, bs, UInt32)
   for j = 1:count
     i, flag = readLeb128(i, bs, UInt8)
@@ -193,13 +192,11 @@ function readBodies(i, bs, bodies, func_names)
   return i
 end
 
-function readFuncTypes(i, bs, func_types, names, func_names)
+function readFuncTypes(i, bs, func_types)
   i, count = readLeb128(i, bs, UInt32)
   for j in 0:count-1
     i, val = readLeb128(i, bs, UInt32)
-    name = haskey(names, j) ? names[j] : Symbol("func_$j")
     push!(func_types, val)
-    push!(func_names, name)
   end
   return i
 end
@@ -217,8 +214,12 @@ function readModule(bs)
   memory = Vector{Tuple{UInt32, Union{UInt32, Void}}}()
   bodies = Vector{Tuple{Vector{WType}, Block}}()
   # A dictionary from int to name for each index space.
-  names = Dict{Symbol, Dict}(:func => Dict{UInt32, Symbol}())
-  func_names = Vector{Symbol}()
+
+  d = Dict{UInt32, Symbol}
+  u = Union{Vector{Symbol}, d}
+  names = Dict{Symbol, u}(:func => d(), :memory => d())
+
+  mem_names = Vector{Symbol}()
   while id < 10
     i, id = readLeb128(i, bs)
     id > id_ || error("Sections must be in increasing order.")
@@ -227,22 +228,38 @@ function readModule(bs)
     if id == 1 # Types
       i = readTypes(i, bs, types)
     elseif id == 3 # Functions
-      i = readFuncTypes(i, bs, func_types, names, func_names)
+      i = readFuncTypes(i, bs, func_types)
       @show func_types
     elseif id == 5 # Memory
       i = readMemory(i, bs, memory)
     elseif id == 7 # Exports
       i = readExports(i, bs, exports)
     elseif id == 10 # Bodies
-      i = readBodies(i, bs, bodies, func_names)
-      length(bodies) == length(func_types) || error("Number of function types and function bodies does not match.")
-      @show bodies
+      getNames(names, [(:func, length(func_types)), (:memory, length(memory))])
+      i = readBodies(i, bs, bodies, names[:func])
+      # @show bodies
     else
       error("Unknown Section")
     end
   end
-  return types, func_types, exports, memory
+  id == 10 || error("No code in file")
+  length(bodies) == length(func_types) == length(names[:func]) || error("Number of function types and function bodies does not match.")
+  funcs = [Func(n, types[t+1]..., b...) for (n, t, b) in zip(names[:func], func_types, bodies)]
+  mems  = [Mem(n, m...) for (n, m) in zip(names[:memory], memory)]
+  exports = [Export(n, names[is][i+1], is) for (n, is, i) in exports]
+
+  return Module([], funcs, [], mems, [], [], [], Ref(0), [], [])
 end
+
+function getNames(names, spacelength)
+  for (s, l) in spacelength
+    push!(names, s => [get(names[s], i, Symbol(s,"_$i")) for i in (0:l-1)])
+  end
+end
+
+
+
+
 
 function getRegisters(i, bs)
   i, regs = getBytes(i, bs)
@@ -317,7 +334,6 @@ function readOp(x :: Tuple{DataType, T}, i, bs, fns) where T
   i = i +1
   if x[1] == Const
     i, arg = readLeb128(i, bs, jltype(x[2][1]))
-    @show arg
     return i, Const(arg)
   end
   i, arg = readLeb128(i, bs)
@@ -355,8 +371,6 @@ const opcodes =
     Select()      => 0x1b,
     Unreachable() => 0x00,
     Nop()         => 0x01,
-
-
 
     (Local,()) => 0x20,
 
