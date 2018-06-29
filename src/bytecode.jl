@@ -115,6 +115,7 @@ end
 # Currently assuming the arrays always have the form length of array followed by
 # the array, same for strings.
 addLength(xs :: Vector{UInt8}) = vcat(toBytes(length(xs)), xs)
+# addLength(xs :: Vector{UInt8}) = vcat(toBytes(100), xs)
 
 toBytes(xs :: Vector{UInt8}) = xs
 toBytes(xs :: Union{Array, Tuple}) = isempty(xs) ? Vector{UInt8}() : vcat((map(toBytes, xs))...)
@@ -147,7 +148,7 @@ function readTypes(i, bs, types)
   return i
 end
 
-function readMemory(i, bs, memory, names, mem_names)
+function readMemory(i, bs, memory)
   i, count = readLeb128(i, bs, UInt32)
   for j = 1:count
     i, flag = readLeb128(i, bs, UInt8)
@@ -174,7 +175,9 @@ end
 
 function readBodies(i, bs, bodies, func_names)
   i, count = readLeb128(i, bs)
+  # @show count
   for j in 1:count
+    # @show j
     i, body_size = readLeb128(i, bs)
     i, local_entry_count = readLeb128(i, bs)
     locals = Vector{WType}()
@@ -185,6 +188,7 @@ function readBodies(i, bs, bodies, func_names)
     end
     i, body = readBody(i, bs, func_names, true)
     block = Block(body)
+    # @show block
     push!(bodies, (locals, block))
     # @show block
     # @show locals
@@ -198,6 +202,31 @@ function readFuncTypes(i, bs, func_types)
     i, val = readLeb128(i, bs, UInt32)
     push!(func_types, val)
   end
+  return i
+end
+
+function readNameMap(i, bs, names)
+  # @show "we're here!"
+  i, count = readLeb128(i, bs)
+  # @show count
+  for j in 1:count
+    i, index = readLeb128(i, bs)
+    i, name = readsymbol(i, bs)
+    # @show name
+    # push!(names, index => name)
+  end
+  # @show "done"
+  return i
+end
+
+
+function nameSection(i, bs, names)
+  i, name_type = readLeb128(i, bs, UInt8)
+  i, name_payload_len = readLeb128(i, bs, UInt8)
+  # @show name_type
+  name_type == 1 || return i + name_payload_len
+  i = readNameMap(i, bs, names[:func])
+  # @show i
   return i
 end
 
@@ -220,29 +249,45 @@ function readModule(bs)
   names = Dict{Symbol, u}(:func => d(), :memory => d())
 
   mem_names = Vector{Symbol}()
-  while id < 10
-    i, id = readLeb128(i, bs)
-    id > id_ || error("Sections must be in increasing order.")
+  while i <= length(bs)
+    id_ = id
+    i, id = readLeb128(i, bs, UInt8)
+    id > id_ || id == 0 || error("Sections must be in increasing order.")
     i, payload_len = readLeb128(i, bs)
-
-    if id == 1 # Types
+    # @show payload_len
+    if id == 0
+      # Only gets function names for now
+      j = i + payload_len
+      i, name = readutf8(i, bs)
+      if name == "name"
+        while i < j
+          i = nameSection(i, bs, names)
+        end
+      end
+      # i, name_len = readLeb128(i, bs, UInt32)
+    elseif id == 1 # Types
       i = readTypes(i, bs, types)
     elseif id == 3 # Functions
       i = readFuncTypes(i, bs, func_types)
-      @show func_types
     elseif id == 5 # Memory
       i = readMemory(i, bs, memory)
     elseif id == 7 # Exports
       i = readExports(i, bs, exports)
     elseif id == 10 # Bodies
       getNames(names, [(:func, length(func_types)), (:memory, length(memory))])
+      # j = i
+      # @show i
       i = readBodies(i, bs, bodies, names[:func])
+      # @show i
+      # @show payload_len
+      # @show i - j
+      # i += payload_len
       # @show bodies
     else
       error("Unknown Section")
     end
   end
-  id == 10 || error("No code in file")
+  # id == 10 || error("No code in file")
   length(bodies) == length(func_types) == length(names[:func]) || error("Number of function types and function bodies does not match.")
   funcs = [Func(n, types[t+1]..., b...) for (n, t, b) in zip(names[:func], func_types, bodies)]
   mems  = [Mem(n, m...) for (n, m) in zip(names[:memory], memory)]
@@ -314,7 +359,10 @@ end
 function readOp(block :: DataType, i, bs, fns)
   (i, is, r) = readBody(i + 1, bs, fns)
   if block == If
-    (i, f, _) = readBody(i, bs, fns, true)
+    f = Vector{Instruction}()
+    if bs[i-1] == opcodes[:else]
+      (i, f, _) = readBody(i, bs, fns, true)
+    end
     return i, If(is, f, r)
   else
     return i, block(is, r)
@@ -341,14 +389,14 @@ function readOp(x :: Tuple{DataType, T}, i, bs, fns) where T
   return (i, x[1](x[2]...,arg))
 end
 
-function readOp(x, i, bs)
-  @show x
-  if x isa Tuple && x[1] isa Call
-    i, arg = readLeb128(i, bs)
-    @show arg
-  end
-  i + 1, Nop()
-end
+# function readOp(x, i, bs)
+#   @show x
+#   if x isa Tuple && x[1] isa Call
+#     i, arg = readLeb128(i, bs)
+#     @show arg
+#   end
+#   i + 1, Nop()
+# end
 
     # if haskey(opcodes_r, bs[i])
     #   push!()
