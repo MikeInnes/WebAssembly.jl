@@ -59,8 +59,9 @@ function getTypes(fs)
 end
 
 # A tag meaning the size of the following data in bytes should be stored.
-# Used in the form of a tuple (Length(), x)
-struct Length end
+struct Length
+  x
+end
 
 # Defers a lookup in a dictionary until conversion to bytes
 struct Lookup
@@ -68,7 +69,7 @@ struct Lookup
   dict :: Dict{Any, Any}
 end
 
-getFunctionBodies(fs) = length(fs), [(Length(), (length(f.locals), [(1,l) for l in f.locals], f.body.body, Lookup(:end, opcodes))) for f in fs]
+getFunctionBodies(fs) = length(fs), [Length((length(f.locals), [(1,l) for l in f.locals], f.body.body, Lookup(:end, opcodes))) for f in fs]
 
 function getExports(es, space)
   return length(es), [(e.name, Lookup(e.typ, external_kind), space[e.typ][e.internalname]) for e in es]
@@ -87,15 +88,15 @@ function getModule(m)
   sections = [(1, types), (3, funcs), (7, exports), (10, code)]
 
   # Add length parameter and convert to bytes
-  bytes = toBytes([(n, (Length(), s)) for (n, s) in sections], f_ids)
+  bytes = toBytes([(n, Length(s)) for (n, s) in sections], f_ids)
 
   return vcat(preamble, bytes)
 end
 
 addLength(xs :: Vector{UInt8}) = vcat(xs |> length |> UInt32 |> toLeb128, xs)
 
-toBytes(x :: UInt8, _) = error("There should be no compiled code before toBytes() is called.")
-toBytes(xs :: Tuple{Length, Any}, f_ids) = addLength(toBytes(xs[2], f_ids))
+toBytes(x  :: UInt8, _) = error("There should be no compiled code before toBytes() is called.")
+toBytes(l  :: Length, f_ids) = addLength(toBytes(l.x, f_ids))
 toBytes(xs :: Union{Array, Tuple}, f_ids) = isempty(xs) ? Vector{UInt8}() : vcat((map(x -> toBytes(x, f_ids), xs))...)
 toBytes(xs :: Union{String, Symbol}, _) = addLength(utf8(xs))
 toBytes(x  :: Integer, _) = toLeb128(x)
