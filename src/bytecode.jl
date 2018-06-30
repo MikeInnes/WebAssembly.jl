@@ -36,7 +36,7 @@ function fromLeb128(bs, typ=BigInt)
     result |= typ(bs[i] & 0x7F) << shift
     shift += 7
   end
-  if bs[end] & 0x40 != 0
+  if !(typ <: Unsigned) && bs[end] & 0x40 != 0
     result |= (typ(-1) << shift)
   end
   return result
@@ -136,92 +136,90 @@ end
 
 loadReadModule(filename) = filename |> getByteFile |> readModule
 
-function readTypes(i, bs, types)
-  readArray(i, bs, types) do i, bs
-    i, form = readLeb128(i, bs, Int8)
+function readTypes(f, types)
+  readArray(f, types) do
+    form = readLeb128(f, Int8)
     form == -32 || error("Not a valid function")
-    i, params = getRegisters(i, bs)
-    i, returns = getRegisters(i, bs)
-    return i, (params, returns)
+    params = getRegisters(f)
+    returns = getRegisters(f)
+    return (params, returns)
   end
 end
 
-function readMemory(i, bs, memory)
-  readArray(i, bs, memory) do i, bs
-    i, flag = readLeb128(i, bs, UInt8)
-    i, initial = readLeb128(i, bs, UInt32)
+function readMemory(f, memory)
+  readArray(f, memory) do
+    flag = readLeb128(f, UInt8)
+    initial = readLeb128(f, UInt32)
     maximum = Void()
     if flag == 0x01
-      i, maximum = readLeb128(i,bs,UInt32)
+      maximum = readLeb128(i,bs,UInt32)
     end
-    return i, (initial, maximum)
+    return (initial, maximum)
   end
 end
 
-function readExports(i, bs, exports)
-  readArray(i, bs, exports) do i, bs
-    i, name = readsymbol(i, bs)
-    i, kind = i + 1, external_kind_r[bs[i]]
-    i, index = readLeb128(i, bs, UInt32)
-    return i, (name, kind, index)
+read1(f) = read(f, 1)[1]
+
+function readExports(f, exports)
+  readArray(f, exports) do
+    name = readsymbol(f)
+    kind = external_kind_r[read1(f)]
+    index = readLeb128(f, UInt32)
+    return (name, kind, index)
   end
 end
 
-function readBodies(i, bs, bodies, func_names)
-  forCount(i, bs) do i, bs
-    i, body_size = readLeb128(i, bs)
+function readBodies(f, bodies, func_names)
+  forCount(f) do
+    body_size = readLeb128(f)
+    read(f, body_size)
+  end
+end
+
+function readBodies(f, bodies)
+  readArray(f, bodies) do
+    read(f, readLeb128(f))
+  end
+end
+
+function bodiesToCode(f, bodies, func_names)
+  forCount(f) do
+    body_size = readLeb128(f)
     locals = Vector{WType}()
-    i, local_entry_count = readLeb128(i, bs)
-    for k in 1:local_entry_count
-      i, count = readLeb128(i, bs)
-      i, typ = i + 1, types_r[bs[i]]
+    forCount(f) do
+      count = readLeb128(f, UInt32)
+      typ = types_r[read1(f)]
       push!(locals, fill(typ, count)...)
     end
-    # Doesn't work
-    # forCount(i, bs) do i, bs
-    #   i, count = readLeb128(i, bs)
-    #   i, typ = i + 1, types_r[bs[i]]
-    #   push!(locals, fill(typ, count)...)
-    #   return i
-    # end
-    i, body = readBody(i, bs, func_names, true)
+    _, body, _ = readBody(f, func_names, true)
     block = Block(body)
     push!(bodies, (locals, block))
-    return i
   end
 end
 
-function readFuncTypes(i, bs, func_types)
-  getArray(i, bs, UInt32, func_types)
+function readFuncTypes(f, func_types)
+  getNumArray(f, UInt32, func_types)
 end
 
-function readNameMap(i, bs, names)
-  # @show "we're here!"
-  i, count = readLeb128(i, bs)
-  # @show count
-  for j in 1:count
-    i, index = readLeb128(i, bs)
-    i, name = readsymbol(i, bs)
-    # @show name
-    # push!(names, index => name)
+function readNameMap(f, names)
+  forCount(f) do
+    index = readLeb128(f)
+    name = readsymbol(f)
+    names[index] = name
   end
-  # @show "done"
-  return i
 end
 
 
-function nameSection(i, bs, names)
-  i, name_type = readLeb128(i, bs, UInt8)
-  i, name_payload_len = readLeb128(i, bs, UInt8)
+function nameSection(f, names)
+  name_type = readLeb128(f, UInt8)
+  name_payload_len = readLeb128(f, UInt8)
   # @show name_type
-  name_type == 1 || return i + name_payload_len
-  i = readNameMap(i, bs, names[:func])
-  # @show i
-  return i
+  name_type == 1 || return skip(f, name_payload_len)
+  readNameMap(f, names[:func])
 end
 
-function readModule(io)
-  if read(io, length(preamble)) != preamble
+function readModule(f)
+  if read(f, length(preamble)) != preamble
     error("Something wrong with preamble. Version 1 only.")
   end
   i = length(preamble) + 1
@@ -232,6 +230,7 @@ function readModule(io)
   exports = Vector{Tuple{Symbol, Symbol, Int}}()
   memory = Vector{Tuple{UInt32, Union{UInt32, Void}}}()
   bodies = Vector{Tuple{Vector{WType}, Block}}()
+  bodies_f = 0
   # A dictionary from int to name for each index space.
 
   d = Dict{UInt32, Symbol}
@@ -239,45 +238,41 @@ function readModule(io)
   names = Dict{Symbol, u}(:func => d(), :memory => d())
 
   mem_names = Vector{Symbol}()
-  while i <= length(bs)
+  while !eof(f)
     id_ = id
-    i, id = readLeb128(i, bs, UInt8)
+    id = readLeb128(f, UInt8)
     id > id_ || id == 0 || error("Sections must be in increasing order.")
-    i, payload_len = readLeb128(i, bs)
+    payload_len = readLeb128(f, UInt32)
     # @show payload_len
     if id == 0
       # Only gets function names for now
-      j = i + payload_len
-      i, name = readutf8(i, bs)
+      section_end = position(f) + payload_len
+      name = readutf8(f)
       if name == "name"
-        while i < j
-          i = nameSection(i, bs, names)
+        while position(f) < section_end
+          nameSection(f, names)
         end
       end
-      # i, name_len = readLeb128(i, bs, UInt32)
+      # i, name_len = readLeb128(f, UInt32)
     elseif id == 1 # Types
-      i = readTypes(i, bs, types)
+      readTypes(f, types)
     elseif id == 3 # Functions
-      i = readFuncTypes(i, bs, func_types)
+      readFuncTypes(f, func_types)
     elseif id == 5 # Memory
-      i = readMemory(i, bs, memory)
+      readMemory(f, memory)
     elseif id == 7 # Exports
-      i = readExports(i, bs, exports)
-    elseif id == 10 # Bodies
-      getNames(names, [(:func, length(func_types)), (:memory, length(memory))])
-      # j = i
-      # @show i
-      i = readBodies(i, bs, bodies, names[:func])
-      # @show i
-      # @show payload_len
-      # @show i - j
-      # i += payload_len
-      # @show bodies
+      readExports(f, exports)
+    elseif id == 10 # Bodies, do this later when names are sorted
+      bodies_f = position(f)
+      skip(f, payload_len)
     else
       error("Unknown Section")
     end
   end
   # id == 10 || error("No code in file")
+  getNames(names, [(:func, length(func_types)), (:memory, length(memory))])
+  seek(f, bodies_f)
+  bodiesToCode(f, bodies, names[:func])
   length(bodies) == length(func_types) == length(names[:func]) || error("Number of function types and function bodies does not match.")
   funcs = [Func(n, types[t+1]..., b...) for (n, t, b) in zip(names[:func], func_types, bodies)]
   mems  = [Mem(n, m...) for (n, m) in zip(names[:memory], memory)]
@@ -292,133 +287,79 @@ function getNames(names, spacelength)
   end
 end
 
+getRegisters(f) = [types_r[b] for b in getBytes(f)]
 
-
-
-
-function getRegisters(i, bs)
-  i, regs = getBytes(i, bs)
-  return i, map(b -> types_r[b], regs)
-end
-
-
-function getArray(i, bs, typ, values)
-  i, count = readLeb128(i, bs, UInt32)
-  for j in 1:count
-    i, val = readLeb128(i, bs, typ)
-    push!(values, val)
+function getNumArray(f, typ, values)
+  readArray(f, values) do
+    readLeb128(f, typ)
   end
-  return i
+  return values
 end
 
-function readLeb128(i, bs, typ=Int32)
-  j = i
-  while (bs[j] & 0x80 != 0)
-    j = j + 1
+function readLeb128(f, typ=Int32)
+  bs = read(f, 1)
+  while (bs[end] & 0x80 != 0)
+    push(bs, read1(f))
   end
-  return j + 1, fromLeb128(bs[i:j], typ)
+  return fromLeb128(bs, typ)
 end
 
-function readutf8(i, bs)
-  i, s = getBytes(i, bs)
-  return i, String(s)
-end
+getBytes(f) = read(f, readLeb128(f, UInt32))
+readutf8(f) = f |> getBytes |> String
+readsymbol(f) = f |> getBytes |> Symbol
 
-function readsymbol(i, bs)
-  i, s = getBytes(i, bs)
-  return i, Symbol(s)
-end
-
-function getBytes(i, bs)
-  i, len = readLeb128(i, bs, UInt32)
-  j = i + len
-  return j, bs[i:j-1]
-end
-
-function readBody(i, bs, fns, else_=false)
+function readBody(f, fns, else_=false)
   is = Vector{Instruction}()
-  # The haskey check seems risky but not all code seems to bother with the 0x40
-  # i, result = else_ || !haskey(types_r, bs[i]) ? (i, Void()) : (i + 1, types_r[bs[i]])
-  i, result = else_ ? (i, Void()) : (i + 1, types_r[bs[i]])
-  while (bs[i] != opcodes[:end]) && (bs[i] != opcodes[:else])
-    i, op = readOp(opcodes_r[bs[i]], i, bs, fns) :: Tuple{Int64, Instruction}
+  result = else_ ? Void() : types_r[read1(f)]
+  b = read1(f)
+  while (b != opcodes[:end]) && (b != opcodes[:else])
+    op = readOp(opcodes_r[b], f, fns) :: Instruction
     push!(is, op)
+    b = read1(f)
   end
-  return (i + 1, is, result)
+  return b, is, result
 end
 
-function readOp(block :: DataType, i, bs, fns)
-  (i, is, r) = readBody(i + 1, bs, fns)
+function readOp(block :: DataType, f, fns)
+  b, is, r = readBody(f, fns)
   if block == If
-    f = Vector{Instruction}()
-    if bs[i-1] == opcodes[:else]
-      (i, f, _) = readBody(i, bs, fns, true)
+    f_is = Vector{Instruction}()
+    if b == opcodes[:else]
+      _, f_is, _ = readBody(f, fns, true)
     end
-    return i, If(is, f, r)
+    return If(is, f_is, r)
   else
-    return i, block(is, r)
+    return block(is, r)
   end
 end
 
-readOp(x::WebAssembly.Instruction, i, bs, fns) = i+1, x
+readOp(x::WebAssembly.Instruction, f, fns) = x
 
-# byte_op(i :: Local, _)     = vcat(opcodes[(Local,)], toLeb128(i.id))
-# byte_op(i :: SetLocal, _)  = vcat(opcodes[SetLocal, i.tee], toLeb128(i.id))
-# byte_op(i :: Const, _)     = vcat(opcodes[Const, i.typ], toLeb128(i.val))
-# byte_op(i :: Branch, _)    = vcat(opcodes[Branch, i.cond], toLeb128(i.level))
-# byte_op(i :: Call, f_ids)  = vcat(opcodes[(Call,)], toLeb128(f_ids[i.name]))
-# readOp(x::WebAssembly.Instruction, i, bs) = i+1, x
-
-function readOp(x :: Tuple{DataType, T}, i, bs, fns) where T
-  i = i +1
-  if x[1] == Const
-    i, arg = readLeb128(i, bs, jltype(x[2][1]))
-    return i, Const(arg)
-  end
-  i, arg = readLeb128(i, bs)
-  x[1] == Call && return i, Call(fns[arg + 1])
-  return (i, x[1](x[2]...,arg))
+function readOp(x :: Tuple{DataType, T}, f, fns) where T
+  x[1] == Const && return Const(readLeb128(f, jltype(x[2][1])))
+  arg = readLeb128(f)
+  x[1] == Call && return Call(fns[arg + 1])
+  return x[1](x[2]...,arg)
 end
 
 # Given a function for reading an item, read an array of those items.
 # Assumes that the next item to be read is a UInt32 of the length of the array
 # followed by the array itself.
-function readArray(f, i, bs, result)
-  # i, count = readLeb128(i, bs)
-  # for j in 1:count
-  #   i, val = f(i, bs)
-  #   push!(result, val)
-  # end
-  # return i
-  forCount(i, bs) do i, bs
-    i, val = f(i, bs)
+function readArray(f, fd, result=Vector{Any}())
+  forCount(fd) do
+    val = f()
     push!(result, val)
-    return i
   end
+  return result
 end
 
 # Repeat an operation the number of times given by the read in count.
-function forCount(f, i, bs)
-  i, count = readLeb128(i, bs, UInt32)
+function forCount(f, fd)
+  count = readLeb128(fd, UInt32)
   for j in 1:count
-    i = f(i, bs)
+    f()
   end
-  return i
 end
-
-
-
-# function readOp(x, i, bs)
-#   @show x
-#   if x isa Tuple && x[1] isa Call
-#     i, arg = readLeb128(i, bs)
-#     @show arg
-#   end
-#   i + 1, Nop()
-# end
-
-    # if haskey(opcodes_r, bs[i])
-    #   push!()
 
 const types =
   Dict(
