@@ -30,7 +30,7 @@ end
 # Converts array of bytes to Integer type. Assumes the array is of only the
 # relevant bytes and thus ignores continuation bits.
 function fromLeb128(bs, typ=BigInt)
-  result = typ(0)
+  result = zero(typ)
   shift = 0
   for i in eachindex(bs)
     result |= typ(bs[i] & 0x7F) << shift
@@ -39,7 +39,7 @@ function fromLeb128(bs, typ=BigInt)
   if !(typ <: Unsigned) && bs[end] & 0x40 != 0
     result |= (typ(-1) << shift)
   end
-  return result
+  return typ(result)
 end
 
 # Get the raw utf8 bytes of a string.
@@ -69,23 +69,41 @@ struct Lookup
   dict :: Dict{Any, Any}
 end
 
-getFunctionBodies(fs) = length(fs), [Length((length(f.locals), [(1,l) for l in f.locals], f.body.body, Lookup(:end, opcodes))) for f in fs]
+getFunctionBodies(fs, f_ids) = length(fs), [Length((length(f.locals), [(1,l) for l in f.locals], getOps(f.body.body, f_ids), Lookup(:end, opcodes))) for f in fs]
+
+getOps(i  :: Call, f_ids)  = Lookup((Call, ()),           opcodes), f_ids[i.name]
+getOps(i  :: Local, _)     = Lookup((Local, ()),          opcodes), i.id
+getOps(i  :: Const, _)     = Lookup((Const, (i.typ,)),    opcodes), i.val
+getOps(i  :: Branch, _)    = Lookup((Branch, (i.cond,)),  opcodes), i.level
+getOps(i  :: SetLocal, _)  = Lookup((SetLocal, (i.tee,)), opcodes), i.id
+
+getOps(is :: Vector{Instruction}, f_ids) = [getOps(i, f_ids) for i in is]
+getOps(i  :: If, f_ids)    = Lookup(If, opcodes), Lookup(i.result, types), getOps(i.t, f_ids), Lookup(:else, opcodes), getOps(i.f, f_ids), Lookup(:end, opcodes)
+getOps(i  :: Union{Block,Loop}, f_ids) = Lookup(typeof(i), opcodes), Lookup(i.result, types), getOps(i.body, f_ids), Lookup(:end, opcodes)
+getOps(i  :: Instruction, _) = Lookup(i, opcodes)
 
 function getExports(es, space)
   return length(es), [(e.name, Lookup(e.typ, external_kind), space[e.typ][e.internalname]) for e in es]
 end
 
+# Can add a Module name and names for locals.
+# Names for locals can't be made more complex than distinguishing parameters
+# and locals, as any complex register allocation will break original variable
+# names. Ultimately they are unneeded.
+# A module name might be useful.
+nameSection(f_ids) = "name", 1, Length((length(f_ids), [(v, k) for (k, v) in f_ids]))
+
 function getModule(m)
   f_ids = Dict(zip([f.name for f in m.funcs], 0:length(m.funcs)))
   m_ids  = Dict(zip([mem.name for mem in m.mems], 0:length(m.mems)))
   space = Dict(:memory => m_ids, :func => f_ids)
-
   types, funcs = getTypes(m.funcs)
   exports = getExports(m.exports, space)
-  code = getFunctionBodies(m.funcs)
+  code = getFunctionBodies(m.funcs, f_ids)
+  names = nameSection(f_ids)
 
   # Pair individual sections in order with their index
-  sections = [(1, types), (3, funcs), (7, exports), (10, code)]
+  sections = [(1, types), (3, funcs), (7, exports), (10, code), (0, names)]
 
   # Add length parameter and convert to bytes
   bytes = toBytes([(n, Length(s)) for (n, s) in sections], f_ids)
@@ -101,16 +119,6 @@ toBytes(xs :: Union{Array, Tuple}, f_ids) = isempty(xs) ? Vector{UInt8}() : vcat
 toBytes(xs :: Union{String, Symbol}, _) = addLength(utf8(xs))
 toBytes(x  :: Integer, _) = toLeb128(x)
 toBytes(x  :: WType, _) = types[x]
-
-toBytes(is :: Vector{Instruction}, f_ids) = Vector{UInt8}(vcat([toBytes(i, f_ids) for i in is]...)) :: Vector{UInt8}
-toBytes(i  :: Call, f_ids)  = vcat(opcodes[Call,()], toLeb128(f_ids[i.name]))
-toBytes(i  :: Local, _)     = vcat(opcodes[Local,()], toLeb128(i.id))
-toBytes(i  :: Const, _)     = vcat(opcodes[Const, (i.typ,)], toLeb128(i.val))
-toBytes(i  :: Branch, _)    = vcat(opcodes[Branch, (i.cond,)], toLeb128(i.level))
-toBytes(i  :: SetLocal, _)  = vcat(opcodes[SetLocal, (i.tee,)], toLeb128(i.id))
-toBytes(i  :: If, f_ids)    = vcat(opcodes[If], types[i.result], toBytes(i.t, f_ids), opcodes[:else], toBytes(i.f, f_ids), opcodes[:end])
-toBytes(i  :: Union{Block,Loop}, f_ids) = vcat(opcodes[typeof(i)], types[i.result], toBytes(i.body, f_ids), opcodes[:end])
-toBytes(i  :: Instruction, _) = opcodes[i]
 toBytes(i  :: Lookup, _) = i.dict[i.x]
 
 function readTypes(f, types)
@@ -125,12 +133,9 @@ end
 
 function readMemory(f, memory)
   readArray(f, memory) do
-    flag = readLeb128(f, UInt8)
+    flag = readLeb128(f, Bool)
     initial = readLeb128(f, UInt32)
-    maximum = Void()
-    if flag == 0x01
-      maximum = readLeb128(i,bs,UInt32)
-    end
+    maximum = flag ? readLeb128(i,bs,UInt32) : Void()
     return (initial, maximum)
   end
 end
