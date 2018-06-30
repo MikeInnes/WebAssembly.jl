@@ -51,49 +51,27 @@ utf8(x) = x |> string |> utf8
 
 # In the binary representation each function is allowed multiple types, as all
 # types are being added to the type section they will each only be given one.
-function getTypes(m)
-  tys = [(f.params, f.returns) for f in m.funcs]
-  types = collect(Set(tys))
-  dict = Dict(zip(types, 0:length(types)))
-  return (length(types), [(-32, length(t[1]), t[1], length(t[2]), t[2]) for t in types]), (length(tys), [[dict[t]] for t in tys]) # -32 == -0x20 :: int7
+function getTypes(fs)
+  tys = [(f.params, f.returns) for f in fs]
+  ts = collect(Set(tys))
+  dict = Dict(zip(ts, 0:length(ts)))
+  return (length(ts), [(Lookup(:func, types), length(t[1]), t[1], length(t[2]), t[2]) for t in ts]), (length(tys), [[dict[t]] for t in tys])
 end
 
-# Get all of the code bodies
-getFunctionBodies(m, f_ids) = length(m.funcs), [addLength(vcat(toBytes((length(f.locals), [(1,l) for l in f.locals], bodyToBytes(f.body.body, f_ids))), 0x0b)) for f in m.funcs]
+# A tag meaning the size of the following data in bytes should be stored.
+# Used in the form of a tuple (Length(), x)
+struct Length end
 
-bodyToBytes(is, f_ids) = Vector{UInt8}(vcat([byte_op(i, f_ids) for i in is]...)) :: Vector{UInt8}
+# Defers a lookup in a dictionary until conversion to bytes
+struct Lookup
+  x :: Any
+  dict :: Dict{Any, Any}
+end
 
-byte_op(i :: Call, f_ids)  = vcat(opcodes[Call,()], toLeb128(f_ids[i.name]))
-byte_op(i :: Local, _)     = vcat(opcodes[Local,()], toLeb128(i.id))
-byte_op(i :: Const, _)     = vcat(opcodes[Const, (i.typ,)], toLeb128(i.val))
-byte_op(i :: Branch, _)    = vcat(opcodes[Branch, (i.cond,)], toLeb128(i.level))
-byte_op(i :: SetLocal, _)  = vcat(opcodes[SetLocal, (i.tee,)], toLeb128(i.id))
-byte_op(i :: If, f_ids)    = vcat(opcodes[If], types[i.result], bodyToBytes(i.t, f_ids), opcodes[:else], bodyToBytes(i.f, f_ids), opcodes[:end])
-byte_op(i :: Union{Block,Loop}, f_ids) = vcat(opcodes[typeof(i)], types[i.result], bodyToBytes(i.body, f_ids), opcodes[:end])
-byte_op(i :: T, _) where T <: Instruction = opcodes[i]
+getFunctionBodies(fs) = length(fs), [(Length(), (length(f.locals), [(1,l) for l in f.locals], f.body.body, Lookup(:end, opcodes))) for f in fs]
 
-const external_kind =
-  Dict(
-    :func   => 0,
-    :table  => 1,
-    :memory => 2,
-    :global => 3
-  )
-
-const external_kind_r =
-  Dict(
-    0x00 => :func,
-    0x01 => :table,
-    0x02 => :memory,
-    0x03 => :global
-  )
-
-# Construct dictionaries from names to index for each index space, and then
-# use them to construct the exports.
-
-# Currently just memory and functions.
-function getExports(m, space)
-  return length(m.exports), [(e.name, external_kind[e.typ], space[e.typ][e.internalname]) for e in m.exports]
+function getExports(es, space)
+  return length(es), [(e.name, Lookup(e.typ, external_kind), space[e.typ][e.internalname]) for e in es]
 end
 
 function getModule(m)
@@ -101,40 +79,38 @@ function getModule(m)
   m_ids  = Dict(zip([mem.name for mem in m.mems], 0:length(m.mems)))
   space = Dict(:memory => m_ids, :func => f_ids)
 
-  types, funcs = getTypes(m)
-  exports = getExports(m, space)
-  code = getFunctionBodies(m, f_ids)
-  # types_, funcs_, exports_, code_ = map(toBytes, (types, funcs, exports, code))
-  # sections = vcat([vcat(toBytes(s[1]),addLength(toBytes(s[2]))) for s in [(1, types), (3, funcs), (7, exports), (10, code)]]...)
-  sections = vcat([vcat(toBytes(s[1]),addLength(toBytes(s[2]))) for s in [(1, types), (3, funcs), (7, exports), (10, code)]]...)
-  # sections = toBytes([(1, types), (3, funcs), (7, exports)])
+  types, funcs = getTypes(m.funcs)
+  exports = getExports(m.exports, space)
+  code = getFunctionBodies(m.funcs)
 
-  return vcat(preamble, sections)
+  # Pair individual sections in order with their index
+  sections = [(1, types), (3, funcs), (7, exports), (10, code)]
+
+  # Add length parameter and convert to bytes
+  bytes = toBytes([(n, (Length(), s)) for (n, s) in sections], f_ids)
+
+  return vcat(preamble, bytes)
 end
 
-# Currently assuming the arrays always have the form length of array followed by
-# the array, same for strings.
-addLength(xs :: Vector{UInt8}) = vcat(toBytes(length(xs)), xs)
-# addLength(xs :: Vector{UInt8}) = vcat(toBytes(100), xs)
+addLength(xs :: Vector{UInt8}) = vcat(xs |> length |> UInt32 |> toLeb128, xs)
 
-toBytes(xs :: Vector{UInt8}) = xs
-toBytes(xs :: Union{Array, Tuple}) = isempty(xs) ? Vector{UInt8}() : vcat((map(toBytes, xs))...)
-# toBytes(xs :: Tuple) = unshift!(collect(Iterators.flatten([toBytes(x) for x in xs])), toBytes(length(xs))...)
-toBytes(xs :: Union{String, Symbol}) = addLength(utf8(xs))
-toBytes(x :: Integer) = toLeb128(x)
-toBytes(x :: WType) = types[x]
-# toBytes(i :: Local) =
+toBytes(x :: UInt8, _) = error("There should be no compiled code before toBytes() is called.")
+toBytes(xs :: Tuple{Length, Any}, f_ids) = addLength(toBytes(xs[2], f_ids))
+toBytes(xs :: Union{Array, Tuple}, f_ids) = isempty(xs) ? Vector{UInt8}() : vcat((map(x -> toBytes(x, f_ids), xs))...)
+toBytes(xs :: Union{String, Symbol}, _) = addLength(utf8(xs))
+toBytes(x  :: Integer, _) = toLeb128(x)
+toBytes(x  :: WType, _) = types[x]
 
-#### Read a bytecode file
-
-function getByteFile(filename)
-  f = open(filename, "r")
-  bs = read(f)
-  close(f)
-  return bs
-end
-
-loadReadModule(filename) = filename |> getByteFile |> readModule
+toBytes(is :: Vector{Instruction}, f_ids) = Vector{UInt8}(vcat([toBytes(i, f_ids) for i in is]...)) :: Vector{UInt8}
+toBytes(i  :: Call, f_ids)  = vcat(opcodes[Call,()], toLeb128(f_ids[i.name]))
+toBytes(i  :: Local, _)     = vcat(opcodes[Local,()], toLeb128(i.id))
+toBytes(i  :: Const, _)     = vcat(opcodes[Const, (i.typ,)], toLeb128(i.val))
+toBytes(i  :: Branch, _)    = vcat(opcodes[Branch, (i.cond,)], toLeb128(i.level))
+toBytes(i  :: SetLocal, _)  = vcat(opcodes[SetLocal, (i.tee,)], toLeb128(i.id))
+toBytes(i  :: If, f_ids)    = vcat(opcodes[If], types[i.result], toBytes(i.t, f_ids), opcodes[:else], toBytes(i.f, f_ids), opcodes[:end])
+toBytes(i  :: Union{Block,Loop}, f_ids) = vcat(opcodes[typeof(i)], types[i.result], toBytes(i.body, f_ids), opcodes[:end])
+toBytes(i  :: Instruction, _) = opcodes[i]
+toBytes(i  :: Lookup, _) = i.dict[i.x]
 
 function readTypes(f, types)
   readArray(f, types) do
@@ -169,21 +145,8 @@ function readExports(f, exports)
   end
 end
 
-function readBodies(f, bodies, func_names)
-  forCount(f) do
-    body_size = readLeb128(f)
-    read(f, body_size)
-  end
-end
-
-function readBodies(f, bodies)
-  readArray(f, bodies) do
-    read(f, readLeb128(f))
-  end
-end
-
 function bodiesToCode(f, bodies, func_names)
-  forCount(f) do
+  readArray(f, bodies) do
     body_size = readLeb128(f)
     locals = Vector{WType}()
     forCount(f) do
@@ -192,8 +155,7 @@ function bodiesToCode(f, bodies, func_names)
       push!(locals, fill(typ, count)...)
     end
     _, body, _ = readBody(f, func_names, true)
-    block = Block(body)
-    push!(bodies, (locals, block))
+    return (locals, Block(body))
   end
 end
 
@@ -209,11 +171,9 @@ function readNameMap(f, names)
   end
 end
 
-
 function nameSection(f, names)
   name_type = readLeb128(f, UInt8)
   name_payload_len = readLeb128(f, UInt8)
-  # @show name_type
   name_type == 1 || return skip(f, name_payload_len)
   readNameMap(f, names[:func])
 end
@@ -231,8 +191,8 @@ function readModule(f)
   memory = Vector{Tuple{UInt32, Union{UInt32, Void}}}()
   bodies = Vector{Tuple{Vector{WType}, Block}}()
   bodies_f = 0
-  # A dictionary from int to name for each index space.
 
+  # A dictionary from int to name for each index space.
   d = Dict{UInt32, Symbol}
   u = Union{Vector{Symbol}, d}
   names = Dict{Symbol, u}(:func => d(), :memory => d())
@@ -243,7 +203,6 @@ function readModule(f)
     id = readLeb128(f, UInt8)
     id > id_ || id == 0 || error("Sections must be in increasing order.")
     payload_len = readLeb128(f, UInt32)
-    # @show payload_len
     if id == 0
       # Only gets function names for now
       section_end = position(f) + payload_len
@@ -253,7 +212,6 @@ function readModule(f)
           nameSection(f, names)
         end
       end
-      # i, name_len = readLeb128(f, UInt32)
     elseif id == 1 # Types
       readTypes(f, types)
     elseif id == 3 # Functions
@@ -293,13 +251,12 @@ function getNumArray(f, typ, values)
   readArray(f, values) do
     readLeb128(f, typ)
   end
-  return values
 end
 
 function readLeb128(f, typ=Int32)
   bs = read(f, 1)
   while (bs[end] & 0x80 != 0)
-    push(bs, read1(f))
+    push!(bs, read1(f))
   end
   return fromLeb128(bs, typ)
 end
@@ -367,6 +324,8 @@ const types =
     i64 => 0x7e,
     f32 => 0x7d,
     f64 => 0x7c,
+    :anyfunc => 0x70,
+    :func => 0x60,
     Void() => 0x40
   )
 
@@ -532,3 +491,13 @@ const opcodes =
 
 # Reverse dictionary of all opcodes including conversions.
 const opcodes_r = map(reverse, opcodes)
+
+const external_kind =
+  Dict(
+    :func   => 0x00,
+    :table  => 0x01,
+    :memory => 0x02,
+    :global => 0x03
+  )
+
+const external_kind_r = map(reverse, external_kind)
