@@ -47,6 +47,19 @@ struct Op <: Instruction
   name::Symbol
 end
 
+struct MemoryOp <: Instruction
+  op :: Op
+  offset :: UInt # Effective address = value + offset
+  alignment :: UInt # Power of 2
+end
+MemoryOp(op::Op) = MemoryOp(op, 0, 0)
+
+struct MemoryUtility <: Instruction
+  name :: Symbol # :current_memory, :grow_memory
+  reserved :: Bool # Reserved but currently unused in MVP
+end
+MemoryUtility(name :: Symbol) = MemoryUtility(name, false)
+
 struct Select <: Instruction end
 
 struct Convert <: Instruction
