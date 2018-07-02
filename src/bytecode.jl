@@ -177,9 +177,7 @@ function bodiesToCode(f, func_names)
   end
 end
 
-function readFuncTypes(f)
-  getNumArray(f, UInt32)
-end
+readFuncTypes(f) = getNumArray(f, UInt32)
 
 function readNameMap(f, names)
   forCount(f) do
