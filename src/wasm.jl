@@ -12,6 +12,9 @@ jltype(x::WType) = [Int32, Int64, Float32, Float64][Int(x)+1]
 
 abstract type Instruction end
 
+import Base.parse
+parse(t::Type{WType}, s) = Dict(zip(map(string, instances(WType)), instances(WType)))[s]
+
 struct Const <: Instruction
   typ::WType
   val::UInt64
@@ -150,7 +153,7 @@ end
 Base.show(io::IO, i::Nop)      = print(io, "nop")
 Base.show(io::IO, i::Const)    = print(io, i.typ, ".const ", value(i))
 Base.show(io::IO, i::Local)    = print(io, "get_local ", i.id)
-Base.show(io::IO, i::SetLocal) = print(io, i.tee ? "tee_local" : "set_local ", i.id)
+Base.show(io::IO, i::SetLocal) = print(io, i.tee ? "tee_local " : "set_local ", i.id)
 Base.show(io::IO, i::Op)       = print(io, i.typ, ".", i.name)
 Base.show(io::IO, i::Call)     = print(io, "call \$", i.name)
 Base.show(io::IO, i::Convert)  = print(io, i.to, ".", i.name, "/", i.from)
@@ -224,7 +227,7 @@ function printwasm(io, x::Import, level)
 end
 
 function Base.show(io::IO, f::Func)
-  print(io, "(func \$$(f.name) ")
+  print(io, "(func \$$(f.name)")
   foreach(p -> print(io, " (param $p)"), f.params)
   foreach(p -> print(io, " (result $p)"), f.returns)
   if !isempty(f.locals)
@@ -237,7 +240,7 @@ end
 
 function printwasm(io::IO, f::Func, level)
   print(io, "\n", "  "^(level))
-  print(io, "(func \$$(f.name) ")
+  print(io, "(func \$$(f.name)")
   foreach(p -> print(io, " (param $p)"), f.params)
   foreach(p -> print(io, " (result $p)"), f.returns)
   if !isempty(f.locals)
