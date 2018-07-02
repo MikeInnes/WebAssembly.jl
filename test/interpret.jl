@@ -124,7 +124,7 @@ end
 
 @testset "Parse-Interpret" begin
 
-relu_wasm = relu_ifelse_wast
+relu_wasm = relu_ifelse_wasm
 
 relu_wasm_expected = Func(Symbol("#relu_Int64"), [i64], [i64], [], Block([Const(0), Local(0), Local(0), Const(0), Op(i64, :lt_s), Select(), Return()]))
 @test relu_wasm.body.body == relu_wasm_expected.body.body
