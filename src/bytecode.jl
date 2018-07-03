@@ -294,6 +294,10 @@ function readOp(x :: Tuple{DataType, Any}, f, fns)
   x[1] == Const && return Const(readLeb128(f, jltype(x[2][1])))
   arg = readLeb128(f)
   x[1] == Call && return Call(fns[arg + 1])
+  if x[2] == MemoryOp
+    offset = readLeb128(f)
+    alignment = log2(arg) # Space in arg for more flags, currently all 0.
+    return MemoryOp(x[2]...,offset,alignment)
   return x[1](x[2]...,arg)
 end
 
@@ -487,7 +491,35 @@ const opcodes =
     Convert(i32, f32, :reinterpret)  =>	0xbc,
     Convert(i64, f64, :reinterpret)  =>	0xbd,
     Convert(f32, i32, :reinterpret)  =>	0xbe,
-    Convert(f64, i64, :reinterpret)  =>	0xbf
+    Convert(f64, i64, :reinterpret)  =>	0xbf,
+
+    (MemoryOp, (Op(i32, load),))     =>	0x28
+    (MemoryOp, (Op(i64, load),))     =>	0x29
+    (MemoryOp, (Op(f32, load),))     =>	0x2a
+    (MemoryOp, (Op(f64, load),))     =>	0x2b
+    (MemoryOp, (Op(i32, load8_s),))  =>	0x2c
+    (MemoryOp, (Op(i32, load8_u),))  =>	0x2d
+    (MemoryOp, (Op(i32, load16_s),)) =>	0x2e
+    (MemoryOp, (Op(i32, load16_u),)) =>	0x2f
+    (MemoryOp, (Op(i64, load8_s),))  =>	0x30
+    (MemoryOp, (Op(i64, load8_u),))  =>	0x31
+    (MemoryOp, (Op(i64, load16_s),)) =>	0x32
+    (MemoryOp, (Op(i64, load16_u),)) =>	0x33
+    (MemoryOp, (Op(i64, load32_s),)) =>	0x34
+    (MemoryOp, (Op(i64, load32_u),)) =>	0x35
+    (MemoryOp, (Op(i32, store),))    =>	0x36
+    (MemoryOp, (Op(i64, store),))    =>	0x37
+    (MemoryOp, (Op(f32, store),))    =>	0x38
+    (MemoryOp, (Op(f64, store),))    =>	0x39
+    (MemoryOp, (Op(i32, store8),))   =>	0x3a
+    (MemoryOp, (Op(i32, store16),))  =>	0x3b
+    (MemoryOp, (Op(i64, store8),))   =>	0x3c
+    (MemoryOp, (Op(i64, store16),))  =>	0x3d
+    (MemoryOp, (Op(i64, store32),))  =>	0x3e
+
+    MemoryUtility(:current_memory) =>	0x3f
+    MemoryUtility(:grow_memory)    =>	0x40
+
   )
 
 # Reverse dictionary of all opcodes including conversions.
