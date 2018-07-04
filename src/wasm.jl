@@ -42,6 +42,14 @@ struct SetLocal <: Instruction
   id::Int
 end
 
+struct GetGlobal <: Instruction
+  id::Int
+end
+
+struct SetGlobal <: Instruction
+  id::Int
+end
+
 struct Op <: Instruction
   typ::WType
   name::Symbol
@@ -130,7 +138,9 @@ struct Mem
 end
 
 struct Global
-  # TODO
+  typ::WType
+  mut::Bool
+  init::Integer
 end
 
 struct Elem
@@ -147,8 +157,7 @@ struct Import
   mod::Symbol
   name::Symbol
   typ::Symbol   # :func, :table, :memory, :global
-  params::Vector{WType}
-  returntype::WType
+  x::Union{FuncType} # Eventually support the other types
 end
 
 struct Export
@@ -165,7 +174,7 @@ struct Module
   globals::Vector{Global}
   elem::Vector{Elem}
   data::Vector{Data}
-  start::Ref{Int}
+  start::Union{Ref{Func}, Ref{Import}}
   imports::Vector{Import}
   exports::Vector{Export}
 end

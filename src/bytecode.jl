@@ -81,6 +81,9 @@ getOps(i  :: Const, _)       = Lookup((Const, (i.typ,)),    opcodes), i.val
 getOps(i  :: Branch, _)      = Lookup((Branch, (i.cond,)),  opcodes), i.level
 getOps(i  :: SetLocal, _)    = Lookup((SetLocal, (i.tee,)), opcodes), i.id
 getOps(i  :: Instruction, _) = Lookup(i, opcodes)
+getOps(i  :: GetGlobal, _)   = Lookup((GetGlobal, ()),      opcodes), i.id
+getOps(i  :: SetGlobal, _)   = Lookup((SetGlobal, ()),      opcodes), i.id
+getOps(i  :: MemoryOp, _)    = Lookup((MemoryOp, (i.op,)),  opcodes), Int(log2(i.alignment)), i.offset
 
 getOps(is :: Vector{Instruction}, f_ids) = map(i->getOps(i, f_ids), is)
 getOps(i  :: Union{Block,Loop}, f_ids) = Lookup(typeof(i), opcodes), Lookup(i.result, types), getOps(i.body, f_ids), Lookup(:end, opcodes)
@@ -102,6 +105,8 @@ end
 # A module name might be useful.
 nameSection(f_ids) = "name", 1, Length((length(f_ids), [(v, k) for (k, v) in f_ids]))
 
+globalSection(gs) = length(gs), [(Lookup(g.typ, types), g.mut, getOps(Const(jltype(g.typ)(g.init)), []), Lookup(:end, opcodes)) for g in gs]
+
 function getModule(m)
   f_ids = Dict(zip([f.name for f in m.funcs], 0:length(m.funcs)))
   m_ids  = Dict(zip([mem.name for mem in m.mems], 0:length(m.mems)))
@@ -110,9 +115,11 @@ function getModule(m)
   exports = getExports(m.exports, space)
   code = getFunctionBodies(m.funcs, f_ids)
   names = nameSection(f_ids)
+  globals = globalSection(m.globals)
+  @show globals
 
   # Pair individual sections in order with their index
-  sections = [(1, types), (3, funcs), (7, exports), (10, code), (0, names)]
+  sections = [(1, types), (3, funcs), (6, globals), (7, exports), (10, code), (0, names)]
 
   # Add length parameter and convert to bytes
   bytes = toBytes([(n, Length(s)) for (n, s) in sections])
@@ -194,18 +201,60 @@ function readNames(f, names)
   readNameMap(f, names[:func])
 end
 
+function readGlobals(f)
+  readArray(f, Vector{Global}()) do
+    typ = types_r[read1(f)]
+    mut = Bool(read1(f))
+    init = init_expr(f)
+    return Global(typ, mut, init)
+  end
+end
+
+# Init exprs need to be interpreted at compile time to get the value. Currently
+# only a very limited set is supported, so it serves to just run the interpreter
+# on this code without the context that would normally be needed.
+
+# TODO: Globals can be set in terms of other (immutable) globals.
+function init_expr(f)
+  body = readBody(f, [], true)[1]
+  ms = Vector()
+  runBody(body,ms,0,[])
+  return ms[1]
+end
+
+function readData(f)
+  readArray(f, Vector{Data}()) do
+    index = readLeb128(f, UInt32)
+    offset = init_expr(f)
+    data = readBytes(f)
+    return Data(index, offset, data)
+  end
+end
+
+function readImports(f)
+  readArray(f, Vector()) do
+    mod = readsymbol(f)
+    name = readsymbol(f)
+    kind = external_kind_r[read1(f)]
+    kind == :func || error("Other import kinds not yet supported")
+    typ = readLeb128(f, UInt32)
+    return mod, name, kind, typ
+  end
+end
+
 function readModule(f)
   if read(f, length(preamble)) != preamble
     error("Something wrong with preamble. Version 1 only.")
   end
   id = id_ = -1
 
-  types = f_types = exports = memory = Vector()
+  types = f_types = exports = memory = globals = data = imports = Vector()
   bodies_f = -1
 
   # A dictionary from int to name for each index space.
   d = Dict{UInt32, Symbol}
   names = Dict(:func => d(), :memory => d())
+  start_index = -1
 
   mem_names = Vector{Symbol}()
   while !eof(f)
@@ -224,17 +273,25 @@ function readModule(f)
       end
     elseif id == 1 # Types
       types = readTypes(f)
+    elseif id == 2 # Ignore imports for now, they aren't needed
+      imports = readImports(f)
     elseif id == 3 # Functions
       f_types = readFuncTypes(f)
     elseif id == 5 # Memory
       memory = readMemory(f)
     elseif id == 7 # Exports
       exports = readExports(f)
+    elseif id == 6
+      globals = readGlobals(f)
+    elseif id == 8
+      start_index = readLeb128(f, UInt32) + 1
     elseif id == 10 # Bodies, do this later when names are sorted
       bodies_f = position(f)
       skip(f, payload_len)
+    elseif id == 11 # Data segments
+      data = readData(f)
     else
-      error("Unknown Section")
+      error("Unknown Section: $id")
     end
   end
   names = getNames(names, [(:func, length(f_types)), (:memory, length(memory))])
@@ -247,8 +304,10 @@ function readModule(f)
   funcs   = [Func(n, types[t+1]..., b...) for (n, t, b) in zip(names[:func], f_types, bodies)]
   mems    = [Mem(n, m...) for (n, m) in zip(names[:memory], memory)]
   exports = [Export(n, names[is][i+1], is) for (n, is, i) in exports]
+  func_imports = [Import(m, n, k, FuncType(types[t+1]...)) for (m,n,k,t) in imports]
+  start   = Ref(start_index > length(func_imports) ? funcs[start_index - length(func_imports)] : func_imports[start_index])
 
-  return Module([], funcs, [], mems, [], [], [], Ref(0), [], exports)
+  return Module([], funcs, [], mems, globals, [], [], start, func_imports, exports)
 end
 
 function getNames(ns, sl)
@@ -292,12 +351,13 @@ readOp(x::WebAssembly.Instruction, f, _) = x
 
 function readOp(x :: Tuple{DataType, Any}, f, fns)
   x[1] == Const && return Const(readLeb128(f, jltype(x[2][1])))
-  arg = readLeb128(f)
+  arg = readLeb128(f, UInt32)
   x[1] == Call && return Call(fns[arg + 1])
-  if x[2] == MemoryOp
-    offset = readLeb128(f)
-    alignment = log2(arg) # Space in arg for more flags, currently all 0.
+  if x[1] == MemoryOp
+    offset = readLeb128(f, UInt32)
+    alignment = 2^arg # Space in arg for more flags, currently all 0.
     return MemoryOp(x[2]...,offset,alignment)
+  end
   return x[1](x[2]...,arg)
 end
 
@@ -344,10 +404,13 @@ const opcodes =
     Unreachable() => 0x00,
     Nop()         => 0x01,
 
-    (Local,()) => 0x20,
+    (Local, ()) => 0x20,
 
     (SetLocal, (true,))  => 0x22,
     (SetLocal, (false,)) => 0x21,
+
+    (SetGlobal, ())   => 0x24,
+    (GetGlobal, ())   => 0x23,
 
     (Const, (i32,))  =>  0x41,
     (Const, (i64,))  =>	0x42,
@@ -493,31 +556,31 @@ const opcodes =
     Convert(f32, i32, :reinterpret)  =>	0xbe,
     Convert(f64, i64, :reinterpret)  =>	0xbf,
 
-    (MemoryOp, (Op(i32, load),))     =>	0x28
-    (MemoryOp, (Op(i64, load),))     =>	0x29
-    (MemoryOp, (Op(f32, load),))     =>	0x2a
-    (MemoryOp, (Op(f64, load),))     =>	0x2b
-    (MemoryOp, (Op(i32, load8_s),))  =>	0x2c
-    (MemoryOp, (Op(i32, load8_u),))  =>	0x2d
-    (MemoryOp, (Op(i32, load16_s),)) =>	0x2e
-    (MemoryOp, (Op(i32, load16_u),)) =>	0x2f
-    (MemoryOp, (Op(i64, load8_s),))  =>	0x30
-    (MemoryOp, (Op(i64, load8_u),))  =>	0x31
-    (MemoryOp, (Op(i64, load16_s),)) =>	0x32
-    (MemoryOp, (Op(i64, load16_u),)) =>	0x33
-    (MemoryOp, (Op(i64, load32_s),)) =>	0x34
-    (MemoryOp, (Op(i64, load32_u),)) =>	0x35
-    (MemoryOp, (Op(i32, store),))    =>	0x36
-    (MemoryOp, (Op(i64, store),))    =>	0x37
-    (MemoryOp, (Op(f32, store),))    =>	0x38
-    (MemoryOp, (Op(f64, store),))    =>	0x39
-    (MemoryOp, (Op(i32, store8),))   =>	0x3a
-    (MemoryOp, (Op(i32, store16),))  =>	0x3b
-    (MemoryOp, (Op(i64, store8),))   =>	0x3c
-    (MemoryOp, (Op(i64, store16),))  =>	0x3d
-    (MemoryOp, (Op(i64, store32),))  =>	0x3e
+    (MemoryOp, (Op(i32, :load),))     =>	0x28,
+    (MemoryOp, (Op(i64, :load),))     =>	0x29,
+    (MemoryOp, (Op(f32, :load),))     =>	0x2a,
+    (MemoryOp, (Op(f64, :load),))     =>	0x2b,
+    (MemoryOp, (Op(i32, :load8_s),))  =>	0x2c,
+    (MemoryOp, (Op(i32, :load8_u),))  =>	0x2d,
+    (MemoryOp, (Op(i32, :load16_s),)) =>	0x2e,
+    (MemoryOp, (Op(i32, :load16_u),)) =>	0x2f,
+    (MemoryOp, (Op(i64, :load8_s),))  =>	0x30,
+    (MemoryOp, (Op(i64, :load8_u),))  =>	0x31,
+    (MemoryOp, (Op(i64, :load16_s),)) =>	0x32,
+    (MemoryOp, (Op(i64, :load16_u),)) =>	0x33,
+    (MemoryOp, (Op(i64, :load32_s),)) =>	0x34,
+    (MemoryOp, (Op(i64, :load32_u),)) =>	0x35,
+    (MemoryOp, (Op(i32, :store),))    =>	0x36,
+    (MemoryOp, (Op(i64, :store),))    =>	0x37,
+    (MemoryOp, (Op(f32, :store),))    =>	0x38,
+    (MemoryOp, (Op(f64, :store),))    =>	0x39,
+    (MemoryOp, (Op(i32, :store8),))   =>	0x3a,
+    (MemoryOp, (Op(i32, :store16),))  =>	0x3b,
+    (MemoryOp, (Op(i64, :store8),))   =>	0x3c,
+    (MemoryOp, (Op(i64, :store16),))  =>	0x3d,
+    (MemoryOp, (Op(i64, :store32),))  =>	0x3e,
 
-    MemoryUtility(:current_memory) =>	0x3f
+    MemoryUtility(:current_memory) =>	0x3f,
     MemoryUtility(:grow_memory)    =>	0x40
 
   )
