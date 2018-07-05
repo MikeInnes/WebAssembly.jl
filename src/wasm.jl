@@ -155,6 +155,7 @@ end
 
 struct Import
   mod::Symbol
+  field_str::Symbol
   name::Symbol
   typ::Symbol   # :func, :table, :memory, :global
   x::Union{FuncType} # Eventually support the other types
@@ -174,7 +175,7 @@ struct Module
   globals::Vector{Global}
   elem::Vector{Elem}
   data::Vector{Data}
-  start::Union{Ref{Func}, Ref{Import}}
+  start::Union{Symbol, Void}
   imports::Vector{Import}
   exports::Vector{Export}
 end
@@ -247,12 +248,10 @@ end
 
 function printwasm(io, x::Import, level)
   print(io, "\n", "  "^(level))
-  print(io, "(import \"$(x.mod)\" \"$(x.name)\" ($(x.typ) \$$(x.mod)_$(x.name)")
-  if x.typ == :func && length(x.params) > 0
-    print(io, " (param")
-    foreach(p -> print(io, " $p"), x.params)
-    print(io, ")")
-    print(io, " (result ", x.returntype, ")")
+  print(io, "(import \"$(x.mod)\" \"$(x.field_str)\" ($(x.typ) \$$(x.name)")
+  if x.typ == :func && length(x.x.params) > 0
+    foreach(p -> print(io, " (param $p)"), x.x.params)
+    foreach(p -> print(io, " (result $p)"), x.x.returns)
   end
   print(io, "))")
 end
