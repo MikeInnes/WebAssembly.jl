@@ -310,6 +310,8 @@ function readImports(f)
   end
 end
 
+readModule(filename::String) = open(f -> readModule(f), filename, "r")
+
 function readModule(f)
   if read(f, length(preamble)) != preamble
     error("Something wrong with preamble. Version 1 only.")
@@ -377,7 +379,7 @@ function readModule(f)
   # @show names[:memory]
   mems    = [Mem(n, m...) for (n, m) in zip(names[:memory], memory)]
   # @show mems
-  exports = [Export(n, names[@show is][i+1], is) for (n, is, i) in exports]
+  exports = [Export(n, names[is][i+1], is) for (n, is, i) in exports]
   func_imports = [Import(m, fs, n, k, FuncType(types[t+1]...)) for (n, (m,fs,k,t)) in zip(names[:func][1:length(imports)],imports)]
 
   start = start_index == -1 ? nothing : (start_index > length(func_imports) ? funcs[start_index - length(func_imports)] : func_imports[start_index]).name
@@ -431,7 +433,7 @@ function readOp(x :: Tuple{DataType, Any}, f, fns)
   x[1] == Call && return Call(fns[arg + 1])
   if x[1] == MemoryOp
     offset = readLeb128(f, UInt32)
-    alignment = 2^arg # Space in arg for more flags, currently all 0.
+    alignment = UInt(2)^arg # Space in arg for more flags, currently all 0.
     return MemoryOp(x[2]...,offset,alignment)
   end
   return x[1](x[2]...,arg)
@@ -632,32 +634,32 @@ const opcodes =
     Convert(f32, i32, :reinterpret)  =>	0xbe,
     Convert(f64, i64, :reinterpret)  =>	0xbf,
 
-    (MemoryOp, (Op(i32, :load),))     =>	0x28,
-    (MemoryOp, (Op(i64, :load),))     =>	0x29,
-    (MemoryOp, (Op(f32, :load),))     =>	0x2a,
-    (MemoryOp, (Op(f64, :load),))     =>	0x2b,
-    (MemoryOp, (Op(i32, :load8_s),))  =>	0x2c,
-    (MemoryOp, (Op(i32, :load8_u),))  =>	0x2d,
-    (MemoryOp, (Op(i32, :load16_s),)) =>	0x2e,
-    (MemoryOp, (Op(i32, :load16_u),)) =>	0x2f,
-    (MemoryOp, (Op(i64, :load8_s),))  =>	0x30,
-    (MemoryOp, (Op(i64, :load8_u),))  =>	0x31,
-    (MemoryOp, (Op(i64, :load16_s),)) =>	0x32,
-    (MemoryOp, (Op(i64, :load16_u),)) =>	0x33,
-    (MemoryOp, (Op(i64, :load32_s),)) =>	0x34,
-    (MemoryOp, (Op(i64, :load32_u),)) =>	0x35,
-    (MemoryOp, (Op(i32, :store),))    =>	0x36,
-    (MemoryOp, (Op(i64, :store),))    =>	0x37,
-    (MemoryOp, (Op(f32, :store),))    =>	0x38,
-    (MemoryOp, (Op(f64, :store),))    =>	0x39,
-    (MemoryOp, (Op(i32, :store8),))   =>	0x3a,
-    (MemoryOp, (Op(i32, :store16),))  =>	0x3b,
-    (MemoryOp, (Op(i64, :store8),))   =>	0x3c,
-    (MemoryOp, (Op(i64, :store16),))  =>	0x3d,
-    (MemoryOp, (Op(i64, :store32),))  =>	0x3e,
+    (MemoryOp, (i32, :load))     =>	0x28,
+    (MemoryOp, (i64, :load))     =>	0x29,
+    (MemoryOp, (f32, :load))     =>	0x2a,
+    (MemoryOp, (f64, :load))     =>	0x2b,
+    (MemoryOp, (i32, :load, UInt(1), true))  =>	0x2c,
+    (MemoryOp, (i32, :load, UInt(1), false))  =>	0x2d,
+    (MemoryOp, (i32, :load, UInt(2), true)) =>	0x2e,
+    (MemoryOp, (i32, :load, UInt(2), false)) =>	0x2f,
+    (MemoryOp, (i64, :load, UInt(1), true))  =>	0x30,
+    (MemoryOp, (i64, :load, UInt(1), false))  =>	0x31,
+    (MemoryOp, (i64, :load, UInt(2), true)) =>	0x32,
+    (MemoryOp, (i64, :load, UInt(2), false)) =>	0x33,
+    (MemoryOp, (i64, :load, UInt(4), true)) =>	0x34,
+    (MemoryOp, (i64, :load, UInt(4), false)) =>	0x35,
+    (MemoryOp, (i32, :store))    =>	0x36,
+    (MemoryOp, (i64, :store))    =>	0x37,
+    (MemoryOp, (f32, :store))    =>	0x38,
+    (MemoryOp, (f64, :store))    =>	0x39,
+    (MemoryOp, (i32, :store, UInt(1)))   =>	0x3a,
+    (MemoryOp, (i32, :store, UInt(2)))  =>	0x3b,
+    (MemoryOp, (i64, :store, UInt(1)))   =>	0x3c,
+    (MemoryOp, (i64, :store, UInt(2)))  =>	0x3d,
+    (MemoryOp, (i64, :store, UInt(4)))  =>	0x3e,
 
-    MemoryUtility(:current_memory) =>	0x3f,
-    MemoryUtility(:grow_memory)    =>	0x40
+    (MemoryUtility, (:current_memory,)) =>	0x3f,
+    (MemoryUtility, (:grow_memory,))    =>	0x40
 
   )
 

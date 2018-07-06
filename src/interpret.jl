@@ -3,6 +3,10 @@ function interpretwasm(f::Func, fs, args)
   locals = [convert(jltype(typ), 0) for typ in f.locals]
   ms = vcat(params, locals)
 
+  @show ms
+  @show f.locals
+  @show f.params
+
   apInstr(f.body, ms, 0, fs)
 
   returns = popn!(ms, length(f.returns))
@@ -18,33 +22,57 @@ function interpretwasm(f::Func, fs, args)
 end
 
 # The state of the module during execution
-# struct State
-  # mem :: Vector{Vector{UInt8}}
-  # fs  :: Dict()
+struct State
+  mem :: Vector{Vector{UInt8}}        # Linear Memory
+  max :: Vector{Union{UInt32, Void}}  # Max size of each linear memory
+  fs  :: Dict{Symbol, Any}            # Function space
+  gs  :: Vector{Tuple{Bool, Integer}} # Global Variables, bool determines mutability.
+end
+
+const page_size = 65536
+
+# Initialise the state with data from data section and create functions, calls
+# the start function.
+function State(m::Module)
+  mem = [zeros(UInt8, m.min * page_size) for m in m.mems]
+  max = [m.max for m in m.mems]
+  for d in m.data
+    mem[d.memidx+1][d.offset+1:d.offset+length(d.data)] = d.data
+  end
+  gs = [(g.mut, jltype(g.typ)(g.init)) for g in m.globals]
+  s = State(mem, max, Dict(), gs)
+  for f in m.funcs
+    s.fs[f.name] = length(f.params), toFunction(f, s)
+  end
+  if m.start != nothing
+    s.fs[m.start][2]()
+  end
+  return s
+end
 
 
-function toFunction(f::Func, fs)
-  return ((args...) -> interpretwasm(f, fs, args))
+function toFunction(f::Func, s)
+  return ((args...) -> interpretwasm(f, s, args))
 end
 
 function interpret_module(m::Module)
-  d = Dict()
-  fs = [(g = toFunction(f, d); d[f.name] = (length(f.params), g); g) for f in m.funcs]
-  @show typeof(d)
-  return fs
+  s = State(m)
+  # efs = filter(e->e.typ==:func, m.exports)
+  # [s.fs[e.internalname][2] for e in efs]
+  return [s.fs[f.name][2] for f in m.funcs]
 end
 
 
-function runBody(body, ms, level, fs)
+function runBody(body, ms, level, s)
   for i in body
     if typeof(i) in [Branch, Return]
       level_ = apInstr(i, ms, level + 1)
       level_ <= level && return level_
     elseif typeof(i) in [If, Block, Loop]
-      level_ = apInstr(i, ms, level + 1, fs)
+      level_ = apInstr(i, ms, level + 1, s)
       level_ <= level && return level_
-    elseif i isa Call
-      apInstr(i, ms, level + 1, fs)
+    elseif typeof(i) ∈ [Call, MemoryOp, GetGlobal, SetGlobal, MemoryUtility]
+      apInstr(i, ms, s)
     else
       apInstr(i, ms)
     end
@@ -83,6 +111,7 @@ operations =
       ,:lt_u   => apN_U(2, <)
       ,:le_s   => apN(2, <=)
       ,:gt_s   => apN(2, >)
+      ,:gt_u   => apN_U(2, >)
       ,:eq     => apN(2, ==)
       ,:ne     => apN(2, !=)
       ,:eqz    => apN(1, x -> x == 0)
@@ -95,6 +124,7 @@ operations =
       ,:shr_u  => apN(2, >>>)
       ,:shl    => apN(2, <<)
       ,:or     => apN(2, |)
+      ,:xor    => apN(2, xor)
       ,:and    => apN(2, &)
       ,:rem_s  => apN(2, rem)
       ,:rem_u  => apN_U(2, rem)
@@ -110,6 +140,52 @@ apInstr(i::Const,       ms) = push!(ms,value(i));
 apInstr(i::Unreachable, ms) = error("Unreachable")
 apInstr(i::Convert,     ms) = push!(ms, convert(jltype(i.to), float(pop!(ms))))
 apInstr(i::Op,          ms) = operations[i.name](ms)
+# apInstr(i::Op,          ms) = ((@show ms[end-min(5, length(ms)-1):end], i.name); @show operations[i.name](ms))
+apInstr(i::GetGlobal,   ms, s) = push!(ms, s.gs[i.id + 1][2])
+apInstr(i::SetGlobal,   ms, s) = s.gs[i.id + 1] = (s.gs[i.id + 1][1], s.gs[i.id + 1][1] ? pop!(ms) : error("Can't set immutable global."))
+function apInstr(i::MemoryUtility, ms, s)
+  if i.name == :current_memory
+    @show Int32(length(s.mem[1])/page_size)
+    push!(ms, Int32(length(s.mem[1])/page_size))
+  elseif i.name == :grow_memory
+    num_pages = pop!(ms)
+    current_memory = Int32(length(s.mem[1])/page_size)
+    if s.max[1] == nothing || num_pages + current_memory > s.max[1]
+      push!(ms, -1)
+    else
+      push!(ms, current_memory)
+      s.mem[1] = vcat(s.mem[1], zeros(UInt8, num_pages * page_size))
+    end
+  else
+    error("nope")
+  end
+end
+
+function apInstr(i::MemoryOp, ms, s)
+  @show ms
+  typ = jltype(i.typ)
+  if i.name == :load
+    address = pop!(ms)
+    effective_address = address + i.offset
+    bs = s.mem[1][effective_address+1:effective_address+i.bytes]
+    if i.bytes == sizeof(typ)
+      @show reinterpret(typ, bs)[1]
+      push!(ms,reinterpret(typ, bs)[1])
+    else
+      error("Sign extension not yet done")
+    end
+  else
+    value = pop!(ms)
+    address = pop!(ms)
+    effective_address = address + i.offset
+    @show address, value
+    if i.bytes == sizeof(typ)
+      s.mem[1][effective_address+1:effective_address+i.bytes] = reinterpret(UInt8, [value])
+    else
+      error("wrapping not yet done")
+    end
+  end
+end
 
 # apInstr(i::SetLocal,    ms) = i.id + 1 == length(ms) ? ms[i.id + 1] = i.tee ? last(ms) : pop!(ms) : ms
 apInstr(i::SetLocal,    ms) = ms[i.id + 1] = i.tee ? last(ms) : pop!(ms)
@@ -129,14 +205,15 @@ apInstr(i::Branch, ms, l) = i.cond && pop!(ms) != 0 || !i.cond ? l - i.level - 1
 
 # Instructions dependent on in scope functions
 
-apInstr(i::Call,   ms, l, fs) = (f = fs[i.name]; push!(ms, f[2]((popn!(ms, f[1]))...)...))
+apN(n, f, ms) = push!(ms, f(popn!(ms, n)...)...)
+apInstr(i::Call,   ms, s) = apN(s.fs[@show i.name]...,ms)
 
-apInstr(i::If,     ms, l, fs) = pop!(ms) != 0 ? runBody(i.t, ms, l, fs) : runBody(i.f, ms, l, fs)
-apInstr(i::Block,  ms, l, fs) = runBody(i.body, ms, l, fs)
-function apInstr(loop::Loop, ms, level, fs)
+apInstr(i::If,     ms, l, s) = pop!(ms) != 0 ? runBody(i.t, ms, l, s) : runBody(i.f, ms, l, s)
+apInstr(i::Block,  ms, l, s) = runBody(i.body, ms, l, s)
+function apInstr(loop::Loop, ms, level, s)
   level_ = level
   while level_ == level
-    level_ = runBody(loop.body, ms, level, fs)
+    level_ = runBody(loop.body, ms, level, s)
   end
   return level_
 end

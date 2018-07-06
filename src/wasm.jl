@@ -56,11 +56,17 @@ struct Op <: Instruction
 end
 
 struct MemoryOp <: Instruction
-  op :: Op
+  typ :: WType
+  name :: Symbol # :load or :store
+  bytes :: UInt # Number of bytes used to store the value
+  conv :: Union{Void, Bool} # true = sext, false = zext
   offset :: UInt # Effective address = value + offset
   alignment :: UInt # Power of 2
 end
-MemoryOp(op::Op) = MemoryOp(op, 0, 0)
+# MemoryOp(op::Op) = MemoryOp(op, 0, 0)
+# MemoryOp(typ :: WType)
+MemoryOp(typ::WType, name::Symbol, offset::Unsigned, alignment::Unsigned) = MemoryOp(typ, name, sizeof(jltype(typ)), nothing, offset, alignment)
+MemoryOp(typ::WType, name::Symbol, bytes::Unsigned, offset::Unsigned, alignment::Unsigned) = MemoryOp(typ, name, bytes, nothing, offset, alignment)
 
 struct MemoryUtility <: Instruction
   name :: Symbol # :current_memory, :grow_memory
