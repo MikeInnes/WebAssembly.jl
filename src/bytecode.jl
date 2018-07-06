@@ -81,15 +81,15 @@ end
 
 getFunctionBodies(fs, f_ids) = length(fs), [Length((length(f.locals), [(1,l) for l in f.locals], getOps(f.body.body, f_ids), Lookup(:end, opcodes))) for f in fs]
 
-getOps(i  :: Call, f_ids)    = Lookup((Call, ()),           opcodes), f_ids[i.name]
-getOps(i  :: Local, _)       = Lookup((Local, ()),          opcodes), i.id
-getOps(i  :: Const, _)       = Lookup((Const, (i.typ,)),    opcodes), value(i)
-getOps(i  :: Branch, _)      = Lookup((Branch, (i.cond,)),  opcodes), i.level
-getOps(i  :: SetLocal, _)    = Lookup((SetLocal, (i.tee,)), opcodes), i.id
-getOps(i  :: Instruction, _) = Lookup(i, opcodes)
-getOps(i  :: GetGlobal, _)   = Lookup((GetGlobal, ()),      opcodes), i.id
-getOps(i  :: SetGlobal, _)   = Lookup((SetGlobal, ()),      opcodes), i.id
-getOps(i  :: MemoryOp, _)    = Lookup((MemoryOp, (i.op,)),  opcodes), Int(log2(i.alignment)), i.offset
+getOps(i :: Call, f_ids)    = Lookup((Call, ()),           opcodes), f_ids[i.name]
+getOps(i :: Local, _)       = Lookup((Local, ()),          opcodes), i.id
+getOps(i :: Const, _)       = Lookup((Const, (i.typ,)),    opcodes), value(i)
+getOps(i :: Branch, _)      = Lookup((Branch, (i.cond,)),  opcodes), i.level
+getOps(i :: SetLocal, _)    = Lookup((SetLocal, (i.tee,)), opcodes), i.id
+getOps(i :: Instruction, _) = Lookup(i, opcodes)
+getOps(i :: GetGlobal, _)   = Lookup((GetGlobal, ()),      opcodes), i.id
+getOps(i :: SetGlobal, _)   = Lookup((SetGlobal, ()),      opcodes), i.id
+getOps(i :: MemoryOp, _)    = Lookup((MemoryOp, (i.op,)),  opcodes), Int(log2(i.alignment)), i.offset
 
 getOps(is :: Vector{Instruction}, f_ids) = map(i->getOps(i, f_ids), is)
 getOps(i  :: Union{Block,Loop}, f_ids) = Lookup(typeof(i), opcodes), Lookup(i.result, types), getOps(i.body, f_ids), Lookup(:end, opcodes)
@@ -161,7 +161,7 @@ function getModule(m)
   # @show m.mems
   memory = memorySection(m.mems)
   println("what")
-  start = m.start == nothing ? error("not yet") : f_ids[m.start]
+  start = m.start == nothing ? nothing : f_ids[m.start]
   # @show start
   imports = importSection(m.imports, if_types)
   # @show imports
@@ -186,11 +186,7 @@ function getModule(m)
              , (0, names)
              ]
 
-  # @show start
-
-  if start == nothing
-    filter!(e->e[1]!=8, sections)
-  end
+  filter!(e->e[2] != nothing, sections)
 
   # Add length parameter and convert to bytes
   bytes = toBytes([(n, Length(s)) for (n, s) in sections])
@@ -368,24 +364,25 @@ function readModule(f)
     end
   end
   names = getNames(names, [(:func, length(f_types) + length(imports)), (:memory, length(memory))])
-  show(names[:func][1])
+  # show(names[:func][1])
 
   bodies_f != -1 || error("No code in file")
   bodies = bodiesToCode(seek(f, bodies_f), names[:func])
 
   length(bodies) == length(f_types) || error("Number of function types and function bodies does not match.")
   l = length(imports)+1
-  @show l
-  @show length(f_types)
+  # @show l
+  # @show length(f_types)
   funcs   = [Func(n, types[t+1]..., b...) for (n, t, b) in zip(names[:func][l:end], f_types, bodies)]
-  @show names[:memory]
+  # @show names[:memory]
   mems    = [Mem(n, m...) for (n, m) in zip(names[:memory], memory)]
-  @show mems
+  # @show mems
   exports = [Export(n, names[@show is][i+1], is) for (n, is, i) in exports]
   func_imports = [Import(m, fs, n, k, FuncType(types[t+1]...)) for (n, (m,fs,k,t)) in zip(names[:func][1:length(imports)],imports)]
-  start   = (start_index > length(func_imports) ? funcs[start_index - length(func_imports)] : func_imports[start_index]).name
-  @show start
-  @show data
+
+  start = start_index == -1 ? nothing : (start_index > length(func_imports) ? funcs[start_index - length(func_imports)] : func_imports[start_index]).name
+  # @show start
+  # @show data
   return Module([], funcs, [], mems, globals, [], data, start, func_imports, exports)
 end
 

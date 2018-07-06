@@ -17,13 +17,21 @@ function interpretwasm(f::Func, fs, args)
   return returns
 end
 
+# The state of the module during execution
+# struct State
+  # mem :: Vector{Vector{UInt8}}
+  # fs  :: Dict()
+
+
 function toFunction(f::Func, fs)
   return ((args...) -> interpretwasm(f, fs, args))
 end
 
 function interpret_module(m::Module)
   d = Dict()
-  [(g = toFunction(f, d); d[f.name] = (length(f.params), g); g) for f in m.funcs]
+  fs = [(g = toFunction(f, d); d[f.name] = (length(f.params), g); g) for f in m.funcs]
+  @show typeof(d)
+  return fs
 end
 
 

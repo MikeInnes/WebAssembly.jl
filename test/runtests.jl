@@ -44,8 +44,8 @@ end
 
 @testset "Import-export" begin
 
-m = WebAssembly.Module(FuncType[], Func[], Table[], Mem[], Global[], Elem[], Data[], Ref(0),
-           [Import(:env, :mathfun, :func, [i32, f64], f64)],
+m = WebAssembly.Module(FuncType[], Func[], Table[], Mem[], Global[], Elem[], Data[], nothing,
+           [Import(:env, :mathfun, :env_mathfun, :func, FuncType([i32, f64], [f64]))],
            [Export(:fun, :fun, :func)])
 
 end
