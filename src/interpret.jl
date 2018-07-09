@@ -1,4 +1,4 @@
-function interpretwasm(f::Func, fs, args)
+function interpretwasm(f::Func, s, args)
   params = [convert(jltype(typ), arg) for (typ, arg) in zip(f.params, args)]
   locals = [convert(jltype(typ), 0) for typ in f.locals]
   ms = vcat(params, locals)
@@ -7,14 +7,21 @@ function interpretwasm(f::Func, fs, args)
   @show f.locals
   @show f.params
 
-  apInstr(f.body, ms, 0, fs)
+  apInstr(f.body, ms, 0, s)
 
   returns = popn!(ms, length(f.returns))
 
   # Check to make sure the return types are all correct
   for (rtyp, r) in zip(f.returns, returns)
     if jltype(rtyp) != typeof(r)
-      error("ERROR: Return type mismatch")
+      @show jltype(rtyp)
+      @show typeof(r)
+      # @show r
+      if r isa Bool && rtyp == i32
+        continue
+      else
+        error("ERROR: Return type mismatch")
+      end
     end
   end
 
@@ -62,22 +69,28 @@ function interpret_module(m::Module)
   return [s.fs[f.name][2] for f in m.funcs]
 end
 
+# Returns dictionary of exported functions
+function interpret_module_dict(m::Module)
+  s = State(m)
+  efs = filter(e->e.typ==:func, m.exports)
+  return Dict(e.name => s.fs[e.internalname][2] for e in efs)
+end
 
-function runBody(body, ms, level, s)
+function runBody(body, ms, level, s, checkbranch=false)
   for i in body
     if typeof(i) in [Branch, Return]
       level_ = apInstr(i, ms, level + 1)
-      level_ <= level && return level_
+      level_ <= level && return checkbranch ? (level_, i isa Branch) : level_
     elseif typeof(i) in [If, Block, Loop]
       level_ = apInstr(i, ms, level + 1, s)
-      level_ <= level && return level_
+      level_ <= level && return checkbranch ? (level_, false) : level_
     elseif typeof(i) ∈ [Call, MemoryOp, GetGlobal, SetGlobal, MemoryUtility]
       apInstr(i, ms, s)
     else
       apInstr(i, ms)
     end
   end
-  return level
+  return checkbranch ? (level, false) : level
 end
 
 function popn!(xs, n)
@@ -110,8 +123,11 @@ operations =
   Dict(:lt_s   => apN(2, <)
       ,:lt_u   => apN_U(2, <)
       ,:le_s   => apN(2, <=)
+      ,:le_u   => apN_U(2, <=)
       ,:gt_s   => apN(2, >)
       ,:gt_u   => apN_U(2, >)
+      ,:ge_s   => apN(2, >=)
+      ,:ge_u   => apN_U(2, >=)
       ,:eq     => apN(2, ==)
       ,:ne     => apN(2, !=)
       ,:eqz    => apN(1, x -> x == 0)
@@ -130,6 +146,7 @@ operations =
       ,:rem_u  => apN_U(2, rem)
       ,:div_s  => apN(2, div)
       ,:div_u  => apN_U(2, div)
+      ,:clz    => apN(1,leading_zeros)
       )
 
 # Level Agnostic Functions
@@ -150,7 +167,7 @@ function apInstr(i::MemoryUtility, ms, s)
   elseif i.name == :grow_memory
     num_pages = pop!(ms)
     current_memory = Int32(length(s.mem[1])/page_size)
-    if s.max[1] == nothing || num_pages + current_memory > s.max[1]
+    if s.max[1] != nothing && num_pages + current_memory > s.max[1]
       push!(ms, -1)
     else
       push!(ms, current_memory)
@@ -167,23 +184,31 @@ function apInstr(i::MemoryOp, ms, s)
   if i.name == :load
     address = pop!(ms)
     effective_address = address + i.offset
-    bs = s.mem[1][effective_address+1:effective_address+i.bytes]
-    if i.bytes == sizeof(typ)
-      @show reinterpret(typ, bs)[1]
-      push!(ms,reinterpret(typ, bs)[1])
-    else
-      error("Sign extension not yet done")
-    end
+    bs = s.mem[1][effective_address+1:effective_address+sizeof(i.store_type)]
+    # if i.bytes == sizeof(typ)
+      # @show reinterpret(typ, bs)[1]
+      # push!(ms,reinterpret(typ, bs)[1])
+    # else
+      # error("Sign extension not yet done")
+      # if i.signed == true
+      b = reinterpret(i.store_type, bs)[1]
+      x = Base.sext_int(typ, b)
+      @show b, x
+      push!(ms, x)
+      typeof(ms[end]) == typ || error("that didn't work")
+        # Base.sext_int(typ, )
+    # end
   else
     value = pop!(ms)
     address = pop!(ms)
     effective_address = address + i.offset
     @show address, value
-    if i.bytes == sizeof(typ)
-      s.mem[1][effective_address+1:effective_address+i.bytes] = reinterpret(UInt8, [value])
-    else
-      error("wrapping not yet done")
-    end
+    # if unsigned(i.store_type) == unsigned(typ)
+      # s.mem[1][effective_address+1:effective_address+sizeof(i.store_type)] = reinterpret(UInt8, [value])
+    # else
+      # error("wrapping not yet done")
+    s.mem[1][effective_address+1:effective_address+sizeof(i.store_type)] = reinterpret(UInt8, [Base.trunc_int(i.store_type, value)])
+    # end
   end
 end
 
@@ -212,8 +237,9 @@ apInstr(i::If,     ms, l, s) = pop!(ms) != 0 ? runBody(i.t, ms, l, s) : runBody(
 apInstr(i::Block,  ms, l, s) = runBody(i.body, ms, l, s)
 function apInstr(loop::Loop, ms, level, s)
   level_ = level
-  while level_ == level
-    level_ = runBody(loop.body, ms, level, s)
+  isbranched = true
+  while isbranched && level_ == level
+    level_, isbranched = runBody(loop.body, ms, level, s, true)
   end
   return level_
 end

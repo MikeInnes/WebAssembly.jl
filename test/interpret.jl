@@ -191,59 +191,69 @@ m2 = wast"""
     (return)))
 """
 
-# @testset "Parse-Interpret" begin
-#
-# relu_wasm = relu_ifelse_wasm
-#
-# relu_wasm_expected = Func(Symbol("#relu_Int64"), [i64], [i64], [], Block([Const(0), Local(0), Local(0), Const(0), Op(i64, :lt_s), Select(), Return()]))
-# @test relu_wasm.body.body == relu_wasm_expected.body.body
-# @test relu_wasm.params == relu_wasm_expected.params
-# @test relu_wasm.returns == relu_wasm_expected.returns
-# @test relu_wasm.name == relu_wasm_expected.name
-#
-# @test rand_test_wasm(relu_ifelse, relu_wasm)
-#
-# # Bulk form for functions
-# root = "test/wast/functions/"
-#
-# for test in tests
-#   @test rand_test_wasm(test[1], test[2])
-# end
-#
-# # Sort of test module parsing
-# @test m.exports == [Export(:addTwo, :addTwo, :func)]
-# expected_func = Func(Symbol("addTwo"), [i32, i32], [i32], [], Block([Local(0), Local(1), Op(i32, :add)]))
-# @test m.funcs[1].body.body == expected_func.body.body
-# @test m.funcs[1].params == expected_func.params
-# @test m.funcs[1].returns == expected_func.returns
-# @test m.funcs[1].name == expected_func.name
-#
-# @test m2.exports == [Export(:this, Symbol("#this_Int64"), :func), Export(:pow, Symbol("#pow_Int64_Int64"), :func), Export(:fib, Symbol("#fib_Int64"), :func)]
-# @test rand_test_module([fib, this, pow], m2)
-#
-# end
+@testset "Parse-Interpret" begin
+
+relu_wasm = relu_ifelse_wasm
+
+relu_wasm_expected = Func(Symbol("#relu_Int64"), [i64], [i64], [], Block([Const(0), Local(0), Local(0), Const(0), Op(i64, :lt_s), Select(), Return()]))
+@test relu_wasm.body.body == relu_wasm_expected.body.body
+@test relu_wasm.params == relu_wasm_expected.params
+@test relu_wasm.returns == relu_wasm_expected.returns
+@test relu_wasm.name == relu_wasm_expected.name
+
+@test rand_test_wasm(relu_ifelse, relu_wasm)
+
+# Bulk form for functions
+root = "test/wast/functions/"
+
+for test in tests
+  @test rand_test_wasm(test[1], test[2])
+end
+
+# Sort of test module parsing
+@test m.exports == [Export(:addTwo, :addTwo, :func)]
+expected_func = Func(Symbol("addTwo"), [i32, i32], [i32], [], Block([Local(0), Local(1), Op(i32, :add)]))
+@test m.funcs[1].body.body == expected_func.body.body
+@test m.funcs[1].params == expected_func.params
+@test m.funcs[1].returns == expected_func.returns
+@test m.funcs[1].name == expected_func.name
+
+@test m2.exports == [Export(:this, Symbol("#this_Int64"), :func), Export(:pow, Symbol("#pow_Int64_Int64"), :func), Export(:fib, Symbol("#fib_Int64"), :func)]
+@test rand_test_module([fib, this, pow], m2)
+
+end
 
 
 @testset "Bytecode" begin
   using WebAssembly: getModule, readModule, State
-  # io = IOBuffer()
-  # write(io, getModule(m2))
-  # @show typeof(io)
-  # m2_ = io |> seekstart |> readModule
-  # @test m2_.exports == m2.exports
-  # @test m2_.mems == m2.mems
-  # @test rand_test_module([fib, this, pow], m2)
+  io = IOBuffer()
+  write(io, getModule(m2))
+  @show typeof(io)
+  m2_ = io |> seekstart |> readModule
+  @test m2_.exports == m2.exports
+  @test m2_.mems == m2.mems
+  @test rand_test_module([fib, this, pow], m2)
 
   @testset "Interpret" begin
     # Initialisation test
     using WebAssembly: getModule, readModule
     io = IOBuffer()
-    m = readModule("main-fixed.wasm")
+    m = readModule("test/base.wasm")
     s = State(m)
     @test length(s.fs) == length(m.funcs)
     @test length(s.mem[1]) == m.mems[1].min * 65536
-    s.fs[Symbol("main/allocate")][2](10)
 
+    efs = filter(e->e.typ==:func, m.exports)
+    defs = Dict(e.name => (xs...) -> s.fs[e.internalname][2](xs...)[1] for e in efs)
+    p = defs[:allocate](100)
+    g = defs[:allocate](100)
+    @test defs[:arraylen_i32](p) == 0
+    @test defs[:arrayset_i32](p, 3, 0) == p
+    @test defs[:arrayref_i32](p, 0) == 3
+    @test defs[:arraylen_i32](p) == 1
+    @test defs[:arrayset_i32](p,3,394) == p
+    @test defs[:arrayref_i32](p,394) == 3
+    @test defs[:arraylen_i32](p) == 395
   end
 
 end
