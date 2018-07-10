@@ -4,6 +4,8 @@ WType(::Type{Int32}) = i32
 WType(::Type{Int64}) = i64
 WType(::Type{Float32}) = f32
 WType(::Type{Float64}) = f64
+WType(t::Type{Array{T}}) where T = i32 # i64 in wasm64
+WType(t::Type{Array{T, N}}) where T where N = i32
 
 WType(::Type{<:Union{Bool,UInt32}}) = i32
 WType(::Type{UInt64}) = i64

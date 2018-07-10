@@ -145,6 +145,22 @@ function dataSection(data)
   length(data), [(d.memidx, get_init_expr(d), Length(Bytes(d.data))) for d in data]
 end
 
+# Reads in base.wasm, merges it with the module m and the calls getModule.
+mergeWithBase(m) = merge_module(getBase(), m)
+
+getBase() = readModule("src/base.wasm")
+
+# Assumes only one module has globals, data sections don't overlap e.t.c.
+# Not very general.
+function merge_module(m,n)
+  # Take the biggest minimum, assume no maximum
+  mem = m.mems[1].min > n.mems[1].min ? Mem(m.mems[1].name, m.mems[1].min, nothing) : Mem(n.mems[1].name, n.mems[1].min, nothing)
+  globals = isempty(m.globals) ? n.globals : m.globals
+  start = m.start == nothing ? n.start : m.start
+
+  return Module([], vcat(m.funcs, n.funcs), [], [mem], globals, [], vcat(m.data, n.data), start, vcat(m.imports, n.imports), vcat(n.exports, m.exports))
+end
+
 
 function getModule(m)
   f_imp = Iterators.filter(x -> x.typ == :func, m.imports) |> collect
@@ -265,8 +281,9 @@ end
 function readNames(f, names)
   name_type = readLeb128(f, UInt8)
   name_payload_len = readLeb128(f, UInt8)
-  name_type == 1 || return skip(f, name_payload_len)
+  name_type == 1 || return (skip(f, name_payload_len); false)
   readNameMap(f, names[:func])
+  return true
 end
 
 function readGlobals(f)
@@ -337,10 +354,12 @@ function readModule(f)
       section_end = position(f) + payload_len
       name = readutf8(f)
       if name == "name"
-        while position(f) < section_end
-          readNames(f, names)
+        read_func_names = false
+        while !read_func_names && position(f) < section_end
+          read_func_names = readNames(f, names)
         end
       end
+      seek(f, section_end)
     elseif id == 1 # Types
       types = readTypes(f)
     elseif id == 2 # Ignore imports for now, they aren't needed

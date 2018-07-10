@@ -1,11 +1,7 @@
 function interpretwasm(f::Func, s, args)
   params = [convert(jltype(typ), arg) for (typ, arg) in zip(f.params, args)]
   locals = [convert(jltype(typ), 0) for typ in f.locals]
-  ms = vcat(params, locals)
-
-  @show ms
-  @show f.locals
-  @show f.params
+  ms = Vector{Integer}(vcat(params, locals))
 
   apInstr(f.body, ms, 0, s)
 
@@ -14,8 +10,6 @@ function interpretwasm(f::Func, s, args)
   # Check to make sure the return types are all correct
   for (rtyp, r) in zip(f.returns, returns)
     if jltype(rtyp) != typeof(r)
-      @show jltype(rtyp)
-      @show typeof(r)
       # @show r
       if r isa Bool && rtyp == i32
         continue
@@ -72,8 +66,9 @@ end
 # Returns dictionary of exported functions
 function interpret_module_dict(m::Module)
   s = State(m)
+  @show keys(s.fs)
   efs = filter(e->e.typ==:func, m.exports)
-  return Dict(e.name => s.fs[e.internalname][2] for e in efs)
+  return Dict(e.name => (xs...) -> s.fs[e.internalname][2](xs...)[1] for e in efs)
 end
 
 function runBody(body, ms, level, s, checkbranch=false)
@@ -162,16 +157,20 @@ apInstr(i::GetGlobal,   ms, s) = push!(ms, s.gs[i.id + 1][2])
 apInstr(i::SetGlobal,   ms, s) = s.gs[i.id + 1] = (s.gs[i.id + 1][1], s.gs[i.id + 1][1] ? pop!(ms) : error("Can't set immutable global."))
 function apInstr(i::MemoryUtility, ms, s)
   if i.name == :current_memory
-    @show Int32(length(s.mem[1])/page_size)
     push!(ms, Int32(length(s.mem[1])/page_size))
   elseif i.name == :grow_memory
+    println("this isn't being called again")
     num_pages = pop!(ms)
     current_memory = Int32(length(s.mem[1])/page_size)
     if s.max[1] != nothing && num_pages + current_memory > s.max[1]
       push!(ms, -1)
     else
+      println(Int32(length(s.mem[1])/page_size))
+
       push!(ms, current_memory)
       s.mem[1] = vcat(s.mem[1], zeros(UInt8, num_pages * page_size))
+      # push!(s.mem[1], zeros(UInt8, num_pages * page_size)...)
+      println(Int32(length(s.mem[1])/page_size))
     end
   else
     error("nope")
@@ -179,7 +178,6 @@ function apInstr(i::MemoryUtility, ms, s)
 end
 
 function apInstr(i::MemoryOp, ms, s)
-  @show ms
   typ = jltype(i.typ)
   if i.name == :load
     address = pop!(ms)
@@ -193,7 +191,6 @@ function apInstr(i::MemoryOp, ms, s)
       # if i.signed == true
       b = reinterpret(i.store_type, bs)[1]
       x = Base.sext_int(typ, b)
-      @show b, x
       push!(ms, x)
       typeof(ms[end]) == typ || error("that didn't work")
         # Base.sext_int(typ, )
@@ -202,7 +199,6 @@ function apInstr(i::MemoryOp, ms, s)
     value = pop!(ms)
     address = pop!(ms)
     effective_address = address + i.offset
-    @show address, value
     # if unsigned(i.store_type) == unsigned(typ)
       # s.mem[1][effective_address+1:effective_address+sizeof(i.store_type)] = reinterpret(UInt8, [value])
     # else
@@ -231,7 +227,7 @@ apInstr(i::Branch, ms, l) = i.cond && pop!(ms) != 0 || !i.cond ? l - i.level - 1
 # Instructions dependent on in scope functions
 
 apN(n, f, ms) = push!(ms, f(popn!(ms, n)...)...)
-apInstr(i::Call,   ms, s) = apN(s.fs[@show i.name]...,ms)
+apInstr(i::Call,   ms, s) = apN(s.fs[i.name]...,ms)
 
 apInstr(i::If,     ms, l, s) = pop!(ms) != 0 ? runBody(i.t, ms, l, s) : runBody(i.f, ms, l, s)
 apInstr(i::Block,  ms, l, s) = runBody(i.body, ms, l, s)
