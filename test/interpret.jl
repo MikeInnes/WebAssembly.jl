@@ -268,7 +268,7 @@ end
           tot += x
         end
       end
-      return tot
+      return Int32(tot)
     end
 
     function sumarr(xs::Vector{Int32})
@@ -289,6 +289,7 @@ end
 
     m = wasm_module([arrayref_i32_ => Tuple{Vector{Int32}}, sum2arr => Tuple{Array{Int32, 2}}, sumarr => Tuple{Array{Int32, 1}}]) |> mergeWithBase
     write("this.wast", string(m))
+    write("this.wasm", getModule(m))
     # s = State(m)
     # push!(s.fs, :func_0 => (2, (xs...) -> [show(("error: ", xs))]))
     # efs = filter(e->e.typ==:func, m.exports)

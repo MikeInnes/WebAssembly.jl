@@ -89,7 +89,8 @@ getOps(i :: SetLocal, _)    = Lookup((SetLocal, (i.tee,)), opcodes), i.id
 getOps(i :: Instruction, _) = Lookup(i, opcodes)
 getOps(i :: GetGlobal, _)   = Lookup((GetGlobal, ()),      opcodes), i.id
 getOps(i :: SetGlobal, _)   = Lookup((SetGlobal, ()),      opcodes), i.id
-getOps(i :: MemoryOp, _)    = Lookup((MemoryOp, (i.op,)),  opcodes), Int(log2(i.alignment)), i.offset
+getOps(i :: MemoryOp, _)    = Lookup((MemoryOp, (i.typ, i.name, i.store_type)),  opcodes), Int(log2(i.alignment)), i.offset
+getOps(i :: MemoryUtility, _) = Lookup((MemoryUtility, (i.name,)), opcodes), i.reserved
 
 getOps(is :: Vector{Instruction}, f_ids) = map(i->getOps(i, f_ids), is)
 getOps(i  :: Union{Block,Loop}, f_ids) = Lookup(typeof(i), opcodes), Lookup(i.result, types), getOps(i.body, f_ids), Lookup(:end, opcodes)
@@ -154,9 +155,11 @@ getBase() = readModule("src/base.wasm")
 # Not very general.
 function merge_module(m,n)
   # Take the biggest minimum, assume no maximum
-  mem = m.mems[1].min > n.mems[1].min ? Mem(m.mems[1].name, m.mems[1].min, nothing) : Mem(n.mems[1].name, n.mems[1].min, nothing)
+  mem = m.mems[1].min > n.mems[1].min ? Mem(m.mems[1].name, m.mems[1].min, nothing) : Mem(m.mems[1].name, n.mems[1].min, nothing)
+  # @show n.mems[1], m.mems[1]
   globals = isempty(m.globals) ? n.globals : m.globals
   start = m.start == nothing ? n.start : m.start
+
 
   return Module([], vcat(m.funcs, n.funcs), [], [mem], globals, [], vcat(m.data, n.data), start, vcat(m.imports, n.imports), vcat(n.exports, m.exports))
 end
@@ -167,8 +170,10 @@ function getModule(m)
   fnames = vcat([i.name for i in f_imp],[f.name for f in m.funcs])
   f_ids = Dict(zip(fnames, 0:length(m.funcs)+length(f_imp)))
   m_ids  = Dict(zip([mem.name for mem in m.mems], 0:length(m.mems)))
+  @show m.mems
   space = Dict(:memory => m_ids, :func => f_ids)
   types, funcs, if_types = getTypes(m.funcs, f_imp)
+  @show m.exports
   exports = getExports(m.exports, space)
   code = getFunctionBodies(m.funcs, f_ids)
   names = nameSection(fnames)
@@ -653,10 +658,10 @@ const opcodes =
     Convert(f32, i32, :reinterpret)  =>	0xbe,
     Convert(f64, i64, :reinterpret)  =>	0xbf,
 
-    (MemoryOp, (i32, :load))     =>	0x28,
-    (MemoryOp, (i64, :load))     =>	0x29,
-    (MemoryOp, (f32, :load))     =>	0x2a,
-    (MemoryOp, (f64, :load))     =>	0x2b,
+    (MemoryOp, (i32, :load, Int32))     =>	0x28,
+    (MemoryOp, (i64, :load, Int64))     =>	0x29,
+    (MemoryOp, (f32, :load, Float32))     =>	0x2a,
+    (MemoryOp, (f64, :load, Float64))     =>	0x2b,
     (MemoryOp, (i32, :load, Int8))  =>	0x2c,
     (MemoryOp, (i32, :load, UInt8))  =>	0x2d,
     (MemoryOp, (i32, :load, Int16)) =>	0x2e,
@@ -667,10 +672,10 @@ const opcodes =
     (MemoryOp, (i64, :load, UInt16)) =>	0x33,
     (MemoryOp, (i64, :load, Int32)) =>	0x34,
     (MemoryOp, (i64, :load, UInt32)) =>	0x35,
-    (MemoryOp, (i32, :store))    =>	0x36,
-    (MemoryOp, (i64, :store))    =>	0x37,
-    (MemoryOp, (f32, :store))    =>	0x38,
-    (MemoryOp, (f64, :store))    =>	0x39,
+    (MemoryOp, (i32, :store, Int32))    =>	0x36,
+    (MemoryOp, (i64, :store, Int64))    =>	0x37,
+    (MemoryOp, (f32, :store, Float32))    =>	0x38,
+    (MemoryOp, (f64, :store, Float64))    =>	0x39,
     (MemoryOp, (i32, :store, Int8))   =>	0x3a,
     (MemoryOp, (i32, :store, Int16))  =>	0x3b,
     (MemoryOp, (i64, :store, Int8))   =>	0x3c,
