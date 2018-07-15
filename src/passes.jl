@@ -93,13 +93,19 @@ using LightGraphs
 # alive is essentially a set of currently used registers, but with the id of the
 # value stored.
 
-function liveness(code, rig=SimpleGraph(), lines=Dict{Int, Vector{Ref}}(), alive=Dict{Int, Int}(), prev_alive=[])
+function liveness(code, rig=SimpleGraph(), lines=Dict{Int, Vector{Ref}}(), alive=Dict{Int, Int}(), prev_alive=[], first_pass_loop::Bool=false, skippedsets=Vector())
   for i in length(code):-1:1
     x = code[i]
     if x isa Local
+      @show x, alive
       id = get!(alive, x.id) do
-        add_vertex!(rig)
-        id = nv(rig)
+        id = if (@show first_pass_loop) && haskey(prev_alive[end], x.id)
+          println("So this happens, $x")
+          prev_alive[end][x.id]
+        else
+          add_vertex!(rig)
+          nv(rig)
+        end
         push!(lines, id => [])
         for v in values(alive)
           add_edge!(rig, id, v)
@@ -107,37 +113,84 @@ function liveness(code, rig=SimpleGraph(), lines=Dict{Int, Vector{Ref}}(), alive
         return id
       end
       push!(lines, id => push!(lines[id], Ref(code, i)))
+    @show alive
     elseif x isa SetLocal
+      @show x
       if x.id in keys(alive)
         id = alive[x.id]
         delete!(alive, x.id)
         push!(lines, id => push!(lines[id], Ref(code, i)))
+        # push!(lines, id => Ref(code, i))
       else
         # TODO: Add support for drop / backprop to remove need for Drop.
-        println("Warning: Setting local $(x.id) but value isn't used (Replace with Drop).")
+        push!(skippedsets, Ref(code, i))
       end
-      @show alive
     elseif x isa Block
       push!(prev_alive, copy(alive))
-      liveness(code[i].body, rig, lines, alive, prev_alive)
+      alive = liveness(code[i].body, rig, lines, alive, prev_alive, first_pass_loop, skippedsets)
       pop!(prev_alive)
     elseif x isa If
       a_t = copy(alive)
       a_f = copy(alive)
       push!(prev_alive, copy(alive))
-      liveness(code[i].t, rig, lines, a_t, prev_alive)
-      liveness(code[i].f, rig, lines, a_f, prev_alive)
+      a_t = liveness(code[i].t, rig, lines, a_t, prev_alive, first_pass_loop, skippedsets)
+      a_f = liveness(code[i].f, rig, lines, a_f, prev_alive, first_pass_loop, skippedsets)
       pop!(prev_alive)
       alive = merge(a_t, a_f)
     elseif x isa Branch
       # At a branch need to revert the state of alive to what it was just after
       # the block. (I.e. just before in terms of calculation order.)
-      a_b = copy(prev_alive[end-x.level])
-      liveness(code[1:i-1], rig, lines, a_b, prev_alive)
-      alive = merge(a_b, alive)
+      if x.cond
+        a_t = copy(prev_alive[end-x.level])
+        a_f = copy(alive)
+        a_t = liveness(code[1:i-1], rig, lines, a_t, prev_alive, first_pass_loop, skippedsets)
+        a_f = liveness(code[1:i-1], rig, lines, a_f, prev_alive, first_pass_loop, skippedsets)
+        alive = merge(a_t, a_f)
+        break;
+      else
+        # error("no non conditional branches")
+        a_b = copy(prev_alive[end-x.level])
+        a_b = liveness(code[1:i-1], rig, lines, a_b, prev_alive, first_pass_loop, skippedsets)
+        alive = a_b
+        break
+      end
+    elseif x isa Loop
+      push!(prev_alive, copy(alive))
+      s_sets = Vector();
+      alive = liveness(code[i].body, rig, lines, alive, prev_alive, true, s_sets)
+      # liveness(s_sets, rig, lines, alive, prev_alive)
+      @show (1, alive)
+      # s_sets will be in reverse order as required.
+      for s in s_sets
+        set = getindex(s)
+        if set.id in keys(alive)
+          println("here!!")
+          # id = alive[getindex(s).id]
+          # delete!(alive, getindex(s).id)
+          # @show haskey(lines, id)
+          # push!(lines, set.id => s)
+          push!(lines, set.id => push!(lines[set.id], s))
+        else
+          println("here!, $(set)")
+          push!(skippedsets, s)
+        end
+      end
+
+
+
+      pop!(prev_alive)
     end
   end
-  return rig
+
+  if first_pass_loop
+    return alive
+  elseif !isempty(skippedsets)
+    println("Warning: Setting locals but values aren't used (Can replace with Drop).")
+    @show map(getindex, skippedsets), map(s -> s.i, skippedsets)
+  end
+  return alive
+
+  # return rig
 end
 
 # TODO: Loops. The problem lies in the fact that the same set_local can be used
