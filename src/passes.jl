@@ -81,3 +81,98 @@ function rmblocks(code)
 end
 
 optimise(b) = b |> deadcode |> makeifs |> rmblocks
+
+# Get the Register Interference Graph of the given code.
+# function RIG(code)
+
+using LightGraphs
+# using GraphLayout
+
+# Construct the graph of nodes that are alive at the same time. For every
+# (set/get) line in the program, figure out what values are alive on that line,
+# push them to the liveness graph.
+
+# Also, since the same local can have many values, return a mapping from
+# line number, level and local id to a unique value id.
+
+# rig is a Register Interference Graph. out_neighbors(value id, rig) will give
+# the ids of the values that are alive at the same time as the given value id.
+
+# lines takes a value_id and returns references to all the get/sets in the code
+# so they can be updated quickly later.
+
+# alive is whether a given register is currently in use, and value_id stored.
+
+# function liveness(code, rig=simple_adjlist(0; is_directed=false), value_ids=Dict{Tuple{Int, Int, Int}, Int}(), level=0)
+# function liveness(code, rig=simple_graph(0; is_directed=false), value_ids=Dict{Tuple{Int, Int, Int}, Int}(), lines=Dict{Int, Vector{RefArray}}())
+function liveness(code, rig=SimpleGraph(), lines=Dict{Int, Vector{Ref}}(), alive=Dict{Int, Int}(), prev_alive=[], cur_alive=[Ref(alive)])
+  # value_id = 0
+  # @show code
+  for i in length(code):-1:1
+    x = code[i]
+    if x isa Local
+      id = get!(alive, x.id) do
+        add_vertex!(rig)
+        id = nv(rig)
+        push!(lines, id => [])
+        for v in values(alive)
+          @show v, id
+          add_edge!(rig, id, v)
+        end
+        return id
+      end
+      push!(lines, id => push!(lines[id], Ref(code, i)))
+    elseif x isa SetLocal
+      if x.id in keys(alive)
+        id = alive[x.id]
+        delete!(alive, x.id)
+        push!(lines, id => push!(lines[id], Ref(code, i)))
+      else
+        # TODO: Add support for drop / backprop to remove need for Drop.
+        println("Warning: Setting local $(x.id) but value isn't used (Replace with Drop).")
+      end
+      @show alive
+    elseif x isa Block
+      push!(prev_alive, copy(alive))
+      liveness(code[i].body, rig, lines, alive, prev_alive)
+      pop!(prev_alive)
+    elseif x isa If
+      a_t = copy(alive)
+      a_f = copy(alive)
+      push!(prev_alive, copy(alive))
+      liveness(code[i].t, rig, lines, a_t, prev_alive)
+      liveness(code[i].f, rig, lines, a_f, prev_alive)
+      pop!(prev_alive)
+      alive = merge(a_t, a_f)
+    elseif x isa Branch
+      # At a branch need to revert the state of alive to what it was just after
+      # the block. (I.e. just before in terms of calculation order.)
+      a_b = copy(prev_alive[end-x.level])
+      liveness(code[1:i-1], rig, lines, a_b, prev_alive)
+      alive = merge(a_b, alive)
+    end
+  end
+  # am = Matrix(adjacency_matrix(rig))
+  # loc_x, loc_y = layout_spring_adj(am)
+  # draw_layout_adj(am, loc_x, loc_y, filename="wheel10.svg")
+
+  return rig
+end
+
+# When a new value comes to life, add edges from it to all currently alive.
+# When it dies, any values that came to life in the mean time will have been
+# added automatically.
+
+# TODO: Loops. The problem lies in the fact that the same set_local can be used
+# for what might be 2 different value_ids.
+
+# loop
+#   get_local 1 <- some value id from before the loop, or the value id from the set below.
+#    ....
+#   set_local 1 <- creates a new value id.
+# end
+
+# In all other constructs flow control is just sequential down the program, so
+# there's no chance of this happening. It should be possible to perform a trick
+# to fix it such as reformatting so any get performed before a set is done
+# outside of the loop.
