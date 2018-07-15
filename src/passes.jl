@@ -82,32 +82,18 @@ end
 
 optimise(b) = b |> deadcode |> makeifs |> rmblocks
 
-# Get the Register Interference Graph of the given code.
-# function RIG(code)
-
 using LightGraphs
-# using GraphLayout
 
-# Construct the graph of nodes that are alive at the same time. For every
-# (set/get) line in the program, figure out what values are alive on that line,
-# push them to the liveness graph.
-
-# Also, since the same local can have many values, return a mapping from
-# line number, level and local id to a unique value id.
-
-# rig is a Register Interference Graph. out_neighbors(value id, rig) will give
+# rig is the Register Interference Graph. out_neighbors(value id, rig) will give
 # the ids of the values that are alive at the same time as the given value id.
 
-# lines takes a value_id and returns references to all the get/sets in the code
+# lines takes a value id and returns references to all the get/sets in the code
 # so they can be updated quickly later.
 
-# alive is whether a given register is currently in use, and value_id stored.
+# alive is essentially a set of currently used registers, but with the id of the
+# value stored.
 
-# function liveness(code, rig=simple_adjlist(0; is_directed=false), value_ids=Dict{Tuple{Int, Int, Int}, Int}(), level=0)
-# function liveness(code, rig=simple_graph(0; is_directed=false), value_ids=Dict{Tuple{Int, Int, Int}, Int}(), lines=Dict{Int, Vector{RefArray}}())
-function liveness(code, rig=SimpleGraph(), lines=Dict{Int, Vector{Ref}}(), alive=Dict{Int, Int}(), prev_alive=[], cur_alive=[Ref(alive)])
-  # value_id = 0
-  # @show code
+function liveness(code, rig=SimpleGraph(), lines=Dict{Int, Vector{Ref}}(), alive=Dict{Int, Int}(), prev_alive=[])
   for i in length(code):-1:1
     x = code[i]
     if x isa Local
@@ -116,7 +102,6 @@ function liveness(code, rig=SimpleGraph(), lines=Dict{Int, Vector{Ref}}(), alive
         id = nv(rig)
         push!(lines, id => [])
         for v in values(alive)
-          @show v, id
           add_edge!(rig, id, v)
         end
         return id
@@ -152,16 +137,8 @@ function liveness(code, rig=SimpleGraph(), lines=Dict{Int, Vector{Ref}}(), alive
       alive = merge(a_b, alive)
     end
   end
-  # am = Matrix(adjacency_matrix(rig))
-  # loc_x, loc_y = layout_spring_adj(am)
-  # draw_layout_adj(am, loc_x, loc_y, filename="wheel10.svg")
-
   return rig
 end
-
-# When a new value comes to life, add edges from it to all currently alive.
-# When it dies, any values that came to life in the mean time will have been
-# added automatically.
 
 # TODO: Loops. The problem lies in the fact that the same set_local can be used
 # for what might be 2 different value_ids.
@@ -176,3 +153,11 @@ end
 # there's no chance of this happening. It should be possible to perform a trick
 # to fix it such as reformatting so any get performed before a set is done
 # outside of the loop.
+
+using GraphLayout
+function drawGraph(filename, graph)
+  # Output the graph
+  am = Matrix(adjacency_matrix(graph))
+  loc_x, loc_y = layout_spring_adj(am)
+  draw_layout_adj(am, loc_x, loc_y, filename=filename)
+end
