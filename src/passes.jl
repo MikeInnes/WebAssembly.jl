@@ -98,14 +98,14 @@ function liveness(func::Func)
   alive = Dict{Int, Int}()
   lines = Vector{Vector{Vector{Int}}}()
   skippedsets = Vector()
-  alive = liveness_(func.body.body, rig, lines, alive, [], [], false, skippedsets)
+  alive = liveness_(func.body.body, rig, lines, alive, [], [], false, skippedsets, Dict())
   # @show alive
   @show skippedsets
   @show map(length, lines) |> sum
   return rig, alive, lines, skippedsets
 end
 
-function liveness_(code, rig::SimpleGraph=SimpleGraph(), lines::Vector{Vector{Vector{Int}}}=[], alive::Dict{Int, Int}=[], branches=[], branch=[], loop::Bool=false, skippedsets=Vector())
+function liveness_(code, rig::SimpleGraph=SimpleGraph(), lines::Vector{Vector{Vector{Int}}}=[], alive::Dict{Int, Int}=[], branches=[], branch=[], loop::Bool=false, skippedsets=Vector(), perm_alive=Dict())
   for i in length(code):-1:1
     x = code[i]
     if x isa Local
@@ -113,6 +113,7 @@ function liveness_(code, rig::SimpleGraph=SimpleGraph(), lines::Vector{Vector{Ve
       id = get!(alive, x.id) do
         id = if loop && haskey(branches[end][1], x.id)
           # println("So this happens, $x")
+          error("not any more!")
           branches[end][1][x.id]
         else
           add_vertex!(rig)
@@ -131,7 +132,9 @@ function liveness_(code, rig::SimpleGraph=SimpleGraph(), lines::Vector{Vector{Ve
       # @show x
       if haskey(alive, x.id)
         id = alive[x.id]
-        delete!(alive, x.id)
+        if !haskey(perm_alive, x.id)
+          delete!(alive, x.id)
+        end
         push!(lines[id], push!(deepcopy(branch), i))
         # @show code[i]
         # push!(lines, id => Ref(code, i))
@@ -142,8 +145,9 @@ function liveness_(code, rig::SimpleGraph=SimpleGraph(), lines::Vector{Vector{Ve
     elseif x isa Block || x isa Loop
       push!(branches, (copy(alive), x isa Loop))
       push!(branch, i)
-      alive = liveness_(code[i].body, rig, lines, alive, branches, branch, loop, skippedsets)
+      alive = liveness_(code[i].body, rig, lines, alive, branches, branch, loop, skippedsets, perm_alive)
       @show sum(map(length, lines))
+      @show alive
       pop!(branch)
       pop!(branches)
     elseif x isa If
@@ -151,10 +155,10 @@ function liveness_(code, rig::SimpleGraph=SimpleGraph(), lines::Vector{Vector{Ve
       a_f = copy(alive)
       push!(branches, (copy(alive), false))
       push!(branch, i, 1)
-      a_t = liveness_(code[i].t, rig, lines, a_t, branches, branch, loop, skippedsets)
+      a_t = liveness_(code[i].t, rig, lines, a_t, branches, branch, loop, skippedsets, perm_alive)
       pop!(branch)
       push!(branch, 2)
-      a_f = liveness_(code[i].f, rig, lines, a_f, branches, branch, loop, skippedsets)
+      a_f = liveness_(code[i].f, rig, lines, a_f, branches, branch, loop, skippedsets, perm_alive)
       pop!(branch)
       pop!(branches)
       alive = merge(a_t, a_f)
@@ -164,34 +168,60 @@ function liveness_(code, rig::SimpleGraph=SimpleGraph(), lines::Vector{Vector{Ve
 
 
       br = branches[end-x.level]
-      a_b = copy(br[1])
-      if !br[2] # If branching to a loop.
-        a_b = liveness_(code[1:i-1], rig, lines, a_b, branches, branch, loop, skippedsets)
+      a_b = x.cond ? merge(alive, copy(br[1])) : copy(br[1])
+      if !br[2] # If not branching to a loop.
+        a_b = liveness_(code[1:i-1], rig, lines, a_b, branches, branch, loop, skippedsets, perm_alive)
       else
-        s_sets = Vector();
-        a_b = liveness_(code[1:i-1], rig, lines, a_b, branches, branch, true, s_sets)
+        perm_alive = deepcopy(a_b)
+        # if x.cond
+          # push!(branches)
+        s_sets = skippedsets;#Vector();
+        # a_f = liveness_(code[1:i-1], deepcopy(rig), deepcopy(lines), deepcopy(a_b), deepcopy(branches), deepcopy(branch), deepcopy(true), deepcopy(s_sets), deepcopy(perm_alive))
+        a_f = liveness_(code[1:i-1], deepcopy(rig), deepcopy(lines), deepcopy(a_b), deepcopy(branches), deepcopy(branch), deepcopy(true), deepcopy(s_sets), deepcopy(perm_alive))
+
+        a_diff = Dict(a => (add_vertex!(rig); nv(rig)) for (a, _) in setdiff(a_f, a_b))
+
+
+        a_new = merge(a_diff, a_b)
+        for (a, v) in a_diff
+          push!(lines, [])
+          for v_ in values(a_new)
+            v == v_ && continue
+            add_edge!(rig, v, v_)
+          end
+        end
+
+
+        a_b = liveness_(code[1:i-1], rig, lines, a_new, branches, branch, true, s_sets, deepcopy(a_new))
+
+        # for a in setdiff(a_f, a_b)
+        #   push!(lines, [])
+        # end
         # liveness(s_sets, rig, lines, alive, branches)
         # @show (1, alive)
         # s_sets will be in reverse order as required.
-        for s in s_sets
-          set = get_instr(code, s[length(branches)+1:end])
-          @show set
-          if haskey(a_b, set.id)
-            push!(lines[a_b[set.id]], s)
-            @show set
-          else
-            push!(skippedsets, s)
-          end
-        end
+
+      #   for s in s_sets
+      #     set = get_instr(code, s[length(branches)+1:end])
+      #     @show set
+      #     if haskey(a_b, set.id)
+      #       push!(lines[a_b[set.id]], s)
+      #       @show set
+      #     else
+      #       push!(skippedsets, s)
+      #     end
+      #   end
       end
-      if x.cond
-        a_f = copy(alive)
-        # It should be possible to calculate this instead of starting over.
-        a_f = liveness_(code[1:i-1], deepcopy(rig), deepcopy(lines), a_f, branches, branch, loop, skippedsets)
-        @show alive
-        @show a_b, a_f
-        merge!(a_b, a_f)
-      end
+
+
+      # if x.cond
+      #   a_f = copy(alive)
+      #   # It should be possible to calculate this instead of starting over.
+      #   a_f = liveness_(code[1:i-1], deepcopy(rig), deepcopy(lines), a_f, branches, branch, loop, skippedsets)
+      #   @show alive
+      #   @show a_b, a_f
+      #   merge!(a_b, a_f)
+      # end
       # TODO: Might want to give a warning about deadcode here on unconditional
       # branches that come after some code.
       alive = a_b
@@ -239,7 +269,8 @@ function allocate_registers(func::Func)
   rig, alive, lines, skippedsets = func |> liveness
   coloring = rig |> greedy_color
   length(alive) == length(func.params) || error("Not all parameters are used.")
-
+  @show coloring
+  @show alive
   c_to_r = Dict(coloring.colors[v] => r for (r, v) in alive)
   i = length(c_to_r) -1
   register_colours = [haskey(c_to_r, c) ? c_to_r[c] : i+=1 for c in 1:coloring.num_colors]
