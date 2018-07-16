@@ -83,6 +83,8 @@ struct Return <: Instruction end
 
 struct Unreachable <: Instruction end
 
+struct Drop <: Instruction end
+
 const unreachable = Unreachable()
 
 struct FuncType
@@ -161,6 +163,7 @@ Base.show(io::IO, i::Select)   = print(io, "select")
 Base.show(io::IO, i::Branch)   = print(io, i.cond ? "br_if " : "br ", i.level)
 Base.show(io::IO, i::Return)   = print(io, "return")
 Base.show(io::IO, i::Unreachable) = print(io, "unreachable")
+Base.show(io::IO, i::Drop)     = print(io, "drop")
 
 printwasm(io, x, level) = show(io, x)
 
