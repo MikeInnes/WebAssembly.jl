@@ -105,7 +105,7 @@ function liveness(func::Func)
   return rig, alive, lines, skippedsets
 end
 
-function liveness_(code, rig::SimpleGraph=[], lines::Vector{Vector{Vector{Int}}}=[], alive::Dict{Int, Int}=[], branches=[], branch=[], loop::Bool=false, skippedsets=Vector())
+function liveness_(code, rig::SimpleGraph=SimpleGraph(), lines::Vector{Vector{Vector{Int}}}=[], alive::Dict{Int, Int}=[], branches=[], branch=[], loop::Bool=false, skippedsets=Vector())
   for i in length(code):-1:1
     x = code[i]
     if x isa Local
@@ -113,7 +113,7 @@ function liveness_(code, rig::SimpleGraph=[], lines::Vector{Vector{Vector{Int}}}
       id = get!(alive, x.id) do
         id = if loop && haskey(branches[end][1], x.id)
           # println("So this happens, $x")
-          branches[end][x.id]
+          branches[end][1][x.id]
         else
           add_vertex!(rig)
           push!(lines, [])
@@ -260,9 +260,11 @@ function allocate_registers(func::Func)
   for s in skippedsets
     set_instr(func, s, Drop())
   end
-
+  @show coloring
+  @show func.params
+  @show func.locals
   locals = func.locals[1:coloring.num_colors-length(func.params)]
-  return Func(func.name, func.params, locals, func.returns, func.body)
+  return Func(func.name, func.params, func.returns, locals, func.body)
 end
 
 using GraphLayout
