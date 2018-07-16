@@ -150,6 +150,7 @@ apInstr(i::Nop,         ms) = nothing
 apInstr(i::Local,       ms) = push!(ms,ms[i.id + 1]);
 apInstr(i::Const,       ms) = push!(ms,value(i));
 apInstr(i::Unreachable, ms) = error("Unreachable")
+apInstr(i::Drop, ms)        = pop!(ms)
 apInstr(i::Convert,     ms) = push!(ms, convert(jltype(i.to), float(pop!(ms))))
 apInstr(i::Op,          ms) = operations[i.name](ms)
 # apInstr(i::Op,          ms) = ((@show ms[end-min(5, length(ms)-1):end], i.name); @show operations[i.name](ms))
