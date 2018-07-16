@@ -95,11 +95,17 @@ using LightGraphs
 
 function liveness(func::Func)
   rig = SimpleGraph()
-  liveness_(func.body.body, rig)
-  return rig
+  alive = Dict{Int, Int}()
+  lines = Vector{Vector{Vector{Int}}}()
+  skippedsets = Vector()
+  alive = liveness_(func.body.body, rig, lines, alive, [], [], false, skippedsets)
+  # @show alive
+  @show skippedsets
+  @show map(length, lines) |> sum
+  return rig, alive, lines, skippedsets
 end
 
-function liveness_(code, rig=SimpleGraph(), lines=Dict{Int, Vector{Ref}}(), alive=Dict{Int, Int}(), branches=[], loop::Bool=false, skippedsets=Vector())
+function liveness_(code, rig::SimpleGraph=[], lines::Vector{Vector{Vector{Int}}}=[], alive::Dict{Int, Int}=[], branches=[], branch=[], loop::Bool=false, skippedsets=Vector())
   for i in length(code):-1:1
     x = code[i]
     if x isa Local
@@ -110,37 +116,46 @@ function liveness_(code, rig=SimpleGraph(), lines=Dict{Int, Vector{Ref}}(), aliv
           branches[end][x.id]
         else
           add_vertex!(rig)
+          push!(lines, [])
           nv(rig)
         end
-        push!(lines, id => [])
         for v in values(alive)
           add_edge!(rig, id, v)
         end
         return id
       end
-      push!(lines, id => push!(lines[id], Ref(code, i)))
+      push!(lines[id], push!(deepcopy(branch), i))
+      # @show code[i], i
     # @show alive
     elseif x isa SetLocal
       # @show x
       if haskey(alive, x.id)
         id = alive[x.id]
         delete!(alive, x.id)
-        push!(lines, id => push!(lines[id], Ref(code, i)))
+        push!(lines[id], push!(deepcopy(branch), i))
+        # @show code[i]
         # push!(lines, id => Ref(code, i))
       else
         # TODO: Add support for drop / backprop to remove need for Drop.
-        push!(skippedsets, Ref(code, i))
+        push!(skippedsets, push!(deepcopy(branch), i))
       end
     elseif x isa Block || x isa Loop
       push!(branches, (copy(alive), x isa Loop))
-      alive = liveness_(code[i].body, rig, lines, alive, branches, loop, skippedsets)
+      push!(branch, i)
+      alive = liveness_(code[i].body, rig, lines, alive, branches, branch, loop, skippedsets)
+      @show sum(map(length, lines))
+      pop!(branch)
       pop!(branches)
     elseif x isa If
       a_t = copy(alive)
       a_f = copy(alive)
       push!(branches, (copy(alive), false))
-      a_t = liveness_(code[i].t, rig, lines, a_t, branches, loop, skippedsets)
-      a_f = liveness_(code[i].f, rig, lines, a_f, branches, loop, skippedsets)
+      push!(branch, i, 1)
+      a_t = liveness_(code[i].t, rig, lines, a_t, branches, branch, loop, skippedsets)
+      pop!(branch)
+      push!(branch, 2)
+      a_f = liveness_(code[i].f, rig, lines, a_f, branches, branch, loop, skippedsets)
+      pop!(branch)
       pop!(branches)
       alive = merge(a_t, a_f)
     elseif x isa Branch
@@ -151,17 +166,19 @@ function liveness_(code, rig=SimpleGraph(), lines=Dict{Int, Vector{Ref}}(), aliv
       br = branches[end-x.level]
       a_b = copy(br[1])
       if !br[2] # If branching to a loop.
-        a_b = liveness_(code[1:i-1], rig, lines, a_b, branches, loop, skippedsets)
+        a_b = liveness_(code[1:i-1], rig, lines, a_b, branches, branch, loop, skippedsets)
       else
         s_sets = Vector();
-        a_b = liveness_(code[1:i-1], rig, lines, a_b, branches, true, s_sets)
+        a_b = liveness_(code[1:i-1], rig, lines, a_b, branches, branch, true, s_sets)
         # liveness(s_sets, rig, lines, alive, branches)
         # @show (1, alive)
         # s_sets will be in reverse order as required.
         for s in s_sets
-          set = getindex(s)
+          set = get_instr(code, s[length(branches)+1:end])
+          @show set
           if haskey(a_b, set.id)
-            push!(lines, set.id => push!(lines[set.id], s))
+            push!(lines[a_b[set.id]], s)
+            @show set
           else
             push!(skippedsets, s)
           end
@@ -169,9 +186,14 @@ function liveness_(code, rig=SimpleGraph(), lines=Dict{Int, Vector{Ref}}(), aliv
       end
       if x.cond
         a_f = copy(alive)
-        a_f = liveness_(code[1:i-1], rig, lines, a_f, branches, loop, skippedsets)
+        # It should be possible to calculate this instead of starting over.
+        a_f = liveness_(code[1:i-1], deepcopy(rig), deepcopy(lines), a_f, branches, branch, loop, skippedsets)
+        @show alive
+        @show a_b, a_f
         merge!(a_b, a_f)
       end
+      # TODO: Might want to give a warning about deadcode here on unconditional
+      # branches that come after some code.
       alive = a_b
       break
     end
@@ -181,9 +203,66 @@ function liveness_(code, rig=SimpleGraph(), lines=Dict{Int, Vector{Ref}}(), aliv
     return alive
   elseif !isempty(skippedsets)
     println("Warning: Setting locals but values aren't used (Can replace with Drop).")
-    println((map(getindex, skippedsets), map(s -> s.i, skippedsets)))
+    println((map(getindex, skippedsets), map(s -> s, skippedsets)))
   end
   return alive
+end
+
+
+get_instr(code, branch) = get_at_loc(code, deepcopy(branch), x->x)
+
+set_instr(code, branch, y) = get_at_loc(code, deepcopy(branch), x->y)
+modify_instr(f, code, branch) = get_at_loc(code, deepcopy(branch), f)
+
+function get_at_loc(code::Vector{Instruction}, branch, f)
+  b = shift!(branch)
+  if isempty(branch)
+    return code[b] = f(code[b])
+  else
+    return get_at_loc(code[b], branch, f)
+  end
+end
+get_at_loc(code::Func, branch, f) = get_at_loc(code.body.body, branch, f)
+get_at_loc(code::Union{Block, Loop}, branch, f) = get_at_loc(code.body, branch, f)
+function get_at_loc(code::If, branch, f)
+  b = shift!(branch)
+  if b == 1
+    return get_at_loc(code.t, branch, f)
+  elseif b == 2
+    return get_at_loc(code.f, branch, f)
+  end
+  error()
+end
+
+
+function allocate_registers(func::Func)
+  rig, alive, lines, skippedsets = func |> liveness
+  coloring = rig |> greedy_color
+  length(alive) == length(func.params) || error("Not all parameters are used.")
+
+  c_to_r = Dict(coloring.colors[v] => r for (r, v) in alive)
+  i = length(c_to_r) -1
+  register_colours = [haskey(c_to_r, c) ? c_to_r[c] : i+=1 for c in 1:coloring.num_colors]
+
+  @show register_colours
+  @show coloring.colors
+
+  col(value_id) = register_colours[coloring.colors[value_id]]
+  for v in eachindex(lines)
+    for l in lines[v]
+      modify_instr(func, l) do s
+        s isa Local ? Local(col(v)) : (s isa SetLocal ? SetLocal(s.tee, col(v)) : error())
+        # s isa Local ? Local(v) : (s isa SetLocal ? SetLocal(s.tee, v) : error())
+      end
+    end
+  end
+
+  for s in skippedsets
+    set_instr(func, s, Drop())
+  end
+
+  locals = func.locals[1:coloring.num_colors-length(func.params)]
+  return Func(func.name, func.params, locals, func.returns, func.body)
 end
 
 using GraphLayout
