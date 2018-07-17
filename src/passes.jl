@@ -80,7 +80,7 @@ function rmblocks(code)
   end
 end
 
-optimise(b) = b |> deadcode |> makeifs |> rmblocks
+optimise(b) = b |> deadcode |> makeifs |> rmblocks |> allocate_registers
 
 using LightGraphs
 
