@@ -80,11 +80,12 @@ function rmblocks(code)
   end
 end
 
-optimise(b) = b |> deadcode |> makeifs |> rmblocks |> allocate_registers
+optimise(b) = b |> deadcode |> makeifs |> rmblocks
 
 using LightGraphs
 
 liveness(code::Func, as...; ks...) = liveness(code.body.body, as...; ks...)
+liveness(code::Block, as...; ks...) = liveness(code.body, as...; ks...)
 
 function liveness_(x::Local, i, alive, branch, rig, lines, as...)
   id = get!(alive, x.id) do
@@ -136,12 +137,13 @@ function liveness_(x::Branch, code, i, alive, branch, branches, perm_alive, rig,
     liveness(code[1:i-1], alive, branch, branches, perm_alive; rig=rig, lines=lines, ks...)
   else
     # First pass of loop to get alive set after loop.
-    a_f = liveness(code[1:i-1], copy(alive), branch, branches, alive; rig=Ref{Int}(nv(rig)))
+    a_f = liveness(code[1:i-1], copy(alive), branch, branches, alive; rig=Ref{Int}(rig isa Ref ? rig.x : nv(rig)))
 
-    a_diff = Dict(a => (add_vertex!(rig); nv(rig)) for (a, _) in setdiff(a_f, alive))
+    a_diff = Dict(a => rig isa Ref ? rig.x += 1 : (add_vertex!(rig); nv(rig)) for (a, _) in setdiff(a_f, alive))
     merge!(alive, a_diff)
     for (a, v) in a_diff
-      push!(lines, [])
+      lines != nothing && push!(lines, [])
+      rig isa Ref && continue
       for v_ in values(alive)
         v == v_ && continue
         add_edge!(rig, v, v_)
@@ -193,8 +195,11 @@ modify_line(f, code, branch) = apply_line(code, copy(branch), f)
 
 apply_line(i::Func, bs, f) = apply_line(i.body.body, bs, f)
 apply_line(i::Union{Block, Loop}, bs, f) = apply_line(i.body, bs, f)
-apply_line(i::If, bs, f) = bs |> shift! |> b -> apply_line(getfield(i, b), bs, f)
-apply_line(i::Vector, bs, f) = bs |> shift! |> b -> isempty(bs) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
+# apply_line(i::If, bs, f) = bs |> shift! |> b -> apply_line(getfield(i, b), bs, f)
+apply_line(i::If, bs, f) = bs |> shift! |> b -> getfield(i, b) |> i -> isempty(bs) ? i : apply_line(i, bs, f)
+
+# apply_line(i::Vector, bs, f) = (@show bs) |> shift! |> b -> isempty(bs) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
+apply_line(i::Vector, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> isempty(bs) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
 
 
 function allocate_registers(func::Func)
@@ -223,9 +228,9 @@ function allocate_registers(func::Func)
   # This is necessary as the register hasn't been updated and might interfere
   # with operation.
   # TODO: Drop removal, not possible in all cases. (E.g.: a conditional drop)
-  isempty(skippedsets) || println("Some sets aren't used, replacing with drop.")
+  isempty(skippedsets) || println("Some sets aren't used, replacing with drop (nop for tee).")
   for s in skippedsets
-    set_line(func, s, Drop())
+    modify_line(x -> x.tee ? Nop() : Drop(), func, s)
   end
 
   locals = func.locals[1:coloring.num_colors-length(func.params)]
@@ -245,33 +250,75 @@ end
 # handy here. It will be in reverse order of appearance, so the final element of
 # each values array will be the set, and all the other elements will be gets.
 
-# This is complicated slightly by loops, where sets can appear elsewhere in the
-# array. For now, only look at values that match the criteria of having only one
-# set and being located at the end.
+# Effectively the stack resets when entering a block, so locals will have to
+# be used to transfer values into a block. It's possible for a block to have
+# a single return value, meaning one time a value can be left on the stack
+# at the end of a block, code for block results in another pull.
 
-# A further issue is that the stack can't have just anything on it when exiting
-# a block. a block can either add one thing to the stack (as specified by the
-# result) or nothing. The fact this is specified makes working out stack changes
-# much simpler, but also means I can only use this optimisation once. for values
-# that exit a block. For the time being I'll add the stipulation that
-# optimisation can only operate on one level.
+# Branches also clear the stack, so not possible to have values saved on the
+# stack during iterations of a loop.
 
-# If a set is followed by one get, we have the opportunity to replace it with
-# the stack. If a set is followed by multiple gets, we can still place it on the
-# stack, but the first get must become a tee. Branches and Ifs complicate how
-# "followed by multiple gets" is calculated, but the stipulation of staying in
-# the same level avoids this.
-
-# The stack change function takes an Instruction and returns how it alters the
-# stack.
-
-# Once results are supported (they are in another pull) this could be 0 or 1.
-stack_change(i::Union{Block, Loop, If, Nop, Convert}) = 0
-stack_change(i::Union{Drop, Local})  = -1
-stack_change(i::SetLocal) = i.tee ? 0 : -1
+stack_change(i::Op) = op_stack_change[i.name]
 stack_change(i::Select) = -2
-stack_change(i::Op) =
-# stack_change(i::Local) = 0
+stack_change(i::SetLocal) = i.tee ? 0 : -1
+stack_change(i::Union{Nop, Convert}) = 0
+stack_change(i::Union{Drop})  = -1
+# Once results are supported (they are in another pull) this could be 0 or 1.
+stack_change(i::Union{Block, Loop, If}) = 0
+stack_change(i::Union{Const, Local, Global}) = 1
+
+# Compute the stack change across a vector of instructions
+stack_change(i::Vector{Instruction}) = sum(map(stack_change, i) |> v -> isempty(v) ? Int[] : v)
+
+# Compute the stack change between 2 lines, currently only allowed when the
+# the level of both is the same.
+function stack_change(code, x, y)
+  x[1:end-1] == y[1:end-1] || error("Stack change across blocks currently unsupported.")
+  x[end] < y[end] || error("Can't check stack change in reverse.")
+  block = get_line(code, x[1:end-1])
+  block = block isa Vector ? block : block.body
+  return stack_change(block[x[end]+1:y[end]-1])
+end
+
+function stack_locals(b)
+  lines = Vector{Vector{Vector{Int}}}()
+  liveness(b; lines=lines)
+  return nops(stack_locals(b, lines))
+end
+
+function stack_locals(b, lines)
+
+  # @show lines
+  # Once more is supported this filtering should stop being necessary.
+  @show lines
+  filter!(lines) do ls
+    (length(ls) >= 2 && get_line(b, ls[end]) isa SetLocal) || return false
+    return all(e->e[1:end-1]==ls[1][1:end-1], ls)
+  end
+  @show lines
+  len = typemax(Int)
+  while length(lines) < len
+    len = length(lines)
+    @show len
+    filter!(lines) do l
+      get, set = l[end-1:end]
+      if stack_change(b, set, get) == 0
+        if length(l) == 2
+          set_line(b, set, Nop())
+          set_line(b, get, Nop())
+        else
+          set_line(b, set, Nop())
+          modify_line(x -> SetLocal(true, x.id), b, get)
+        end
+        return false
+      end
+      return true
+    end
+  end
+  # @show lines, length(lines)
+  return b
+end
+
 
 const op_stack_change =
   Dict(
@@ -320,8 +367,5 @@ const op_stack_change =
     :div      =>  -1,
     :min      =>  -1,
     :max      =>  -1,
-    :copysign =>  -1,
-
-
-
+    :copysign =>  -1
 )
