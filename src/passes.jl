@@ -80,9 +80,78 @@ function rmblocks(code)
   end
 end
 
-optimise(b) = b |> deadcode |> makeifs |> rmblocks
+optimise(b) = b |> deadcode |> makeifs |> rmblocks |> allocate_registers
 
 using LightGraphs
+
+liveness(code::Func, as...; ks...) = liveness(code.body.body, as...; ks...)
+
+function liveness_(x::Local, i, alive, branch, rig, lines, as...)
+  id = get!(alive, x.id) do
+    lines != nothing && push!(lines, [])
+    rig isa Ref && return rig.x += 1
+    add_vertex!(rig) || error()
+    id = nv(rig)
+    for v in values(alive)
+      add_edge!(rig, id, v)
+    end
+    return id
+  end
+  lines != nothing && push!(lines[id], push!(copy(branch), i))
+end
+
+function liveness_(x::SetLocal, i, alive, branch, rig, lines, perm_alive, skippedsets)
+  if haskey(alive, x.id)
+    id = alive[x.id]
+    if !haskey(perm_alive, x.id)
+      delete!(alive, x.id)
+    end
+    lines != nothing && push!(lines[id], push!(copy(branch), i))
+  else
+    skippedsets != nothing && push!(skippedsets, push!(copy(branch), i))
+  end
+end
+
+function liveness_(x::Union{Block, Loop}, i, alive, branch, branches, as... ; ks...)
+  push!(branches, (copy(alive), x isa Loop))
+  push!(branch, i)
+  liveness(x.body, alive, branch, branches, as...; ks...)
+  pop!(branch)
+  pop!(branches)
+end
+
+function liveness_(x::If, i, alive, branch, as... ; ks...)
+  push!(branch, i)
+  a_t = copy(alive)
+  liveness_(Block(x.t), 1, a_t, branch, as...; ks...)
+  liveness_(Block(x.f), 2, alive, branch, as...; ks...)
+  pop!(branch)
+  merge!(alive, a_t)
+end
+
+function liveness_(x::Branch, code, i, alive, branch, branches, perm_alive, rig, lines; ks...)
+  br = branches[end-x.level]
+  x.cond ? merge!(alive, copy(br[1])) : merge!(empty!(alive), copy(br[1]))
+  if !br[2] # If not branching to a loop.
+    liveness(code[1:i-1], alive, branch, branches, perm_alive; rig=rig, lines=lines, ks...)
+  else
+    # First pass of loop to get alive set after loop.
+    a_f = liveness(code[1:i-1], copy(alive), branch, branches, alive; rig=Ref{Int}(nv(rig)))
+
+    a_diff = Dict(a => (add_vertex!(rig); nv(rig)) for (a, _) in setdiff(a_f, alive))
+    merge!(alive, a_diff)
+    for (a, v) in a_diff
+      push!(lines, [])
+      for v_ in values(alive)
+        v == v_ && continue
+        add_edge!(rig, v, v_)
+      end
+    end
+
+    # Second pass of loop using the calculated alive set.
+    liveness(code[1:i-1], alive, branch, branches, copy(alive); rig=rig, lines=lines, ks...)
+  end
+end
 
 # rig is the Register Interference Graph. out_neighbors(value id, rig) will give
 # the ids of the values that are alive at the same time as the given value id.
@@ -90,209 +159,75 @@ using LightGraphs
 # lines takes a value id and returns references to all the get/sets in the code
 # so they can be updated quickly later.
 
+# skippedsets is any encountered set where the value isn't used.
+
 # alive is essentially a set of currently used registers, but with the id of the
 # value stored.
 
-function liveness(func::Func)
-  rig = SimpleGraph()
-  alive = Dict{Int, Int}()
-  lines = Vector{Vector{Vector{Int}}}()
-  skippedsets = Vector()
-  alive = liveness_(func.body.body; rig=rig, lines=lines, alive=alive, skippedsets=skippedsets)
-  # @show alive
-  @show skippedsets
-  @show map(length, lines) |> sum
-  return rig, alive, lines, skippedsets
-end
-
-function liveness_(code; rig::Union{Ref{Int}, SimpleGraph}=Ref{Int}(0), lines::Union{Void, Vector{Vector{Vector{Int}}}}=nothing, alive::Dict{Int, Int}=Dict{Int, Int}(), branches=[], branch=[], skippedsets::Union{Void, Vector}=nothing, perm_alive::Dict=Dict())
+function liveness( code::Vector{Instruction}
+                 , alive::Dict{Int, Int}=Dict{Int, Int}()
+                 , branch::Vector{Int}=Vector{Int}()
+                 , branches::Vector{Tuple{Dict{Int,Int},Bool}}=Vector{Tuple{Dict{Int,Int},Bool}}()
+                 , perm_alive::Dict{Int, Int}=Dict{Int, Int}()
+                 ; rig::Union{Ref{Int}, SimpleGraph{Int}}=Ref{Int}(0)
+                 , lines::Union{Void, Vector{Vector{Vector{Int}}}}=nothing
+                 , skippedsets::Union{Void, Vector{Vector{Int}}}=nothing
+                 )
   for i in length(code):-1:1
     x = code[i]
-    if x isa Local
-      # @show x, alive
-      id = get!(alive, x.id) do
-        # id =
-        # if loop && haskey(branches[end][1], x.id)
-        #   # println("So this happens, $x")
-        #   error("not any more!")
-        #   branches[end][1][x.id]
-        # else
-        lines != nothing && push!(lines, [])
-        rig isa Ref && return rig.x += 1
-        add_vertex!(rig)
-        id = nv(rig)
-        # end
-        for v in values(alive)
-          add_edge!(rig, id, v)
-        end
-        return id
-      end
-      lines != nothing && push!(lines[id], push!(deepcopy(branch), i))
-      # @show code[i], i
-    # @show alive
-    elseif x isa SetLocal
-      # @show x
-      if haskey(alive, x.id)
-        id = alive[x.id]
-        if !haskey(perm_alive, x.id)
-          delete!(alive, x.id)
-        end
-        lines != nothing && push!(lines[id], push!(deepcopy(branch), i))
-        # @show code[i]
-        # push!(lines, id => Ref(code, i))
-      else
-        # TODO: Add support for drop / backprop to remove need for Drop.
-        skippedsets != nothing && push!(skippedsets, push!(deepcopy(branch), i))
-      end
-    elseif x isa Block || x isa Loop
-      push!(branches, (copy(alive), x isa Loop))
-      push!(branch, i)
-      alive = liveness_(code[i].body; rig=rig, lines=lines, alive=alive, branches=branches, branch=branch, skippedsets=skippedsets, perm_alive=perm_alive)
-      @show sum(map(length, lines))
-      @show alive
-      pop!(branch)
-      pop!(branches)
-    elseif x isa If
-      a_t = copy(alive)
-      a_f = copy(alive)
-      push!(branches, (copy(alive), false))
-      push!(branch, i, 1)
-      a_t = liveness_(code[i].t; rig=rig, lines=lines, alive=a_t, branches=branches, branch=branch, skippedsets=skippedsets, perm_alive=perm_alive)
-      pop!(branch)
-      push!(branch, 2)
-      a_f = liveness_(code[i].f; rig=rig, lines=lines, alive=a_f, branches=branches, branch=branch, skippedsets=skippedsets, perm_alive=perm_alive)
-      # a_f = liveness_(code[i].f, rig, lines, a_f, branches, branch, loop, skippedsets, perm_alive)
-      pop!(branch)
-      pop!(branches)
-      alive = merge(a_t, a_f)
+    if x isa Local || x isa SetLocal
+      liveness_(x, i, alive, branch, rig, lines, perm_alive, skippedsets)
+    elseif x isa Block || x isa Loop || x isa If
+      liveness_(x, i, alive, branch, branches, perm_alive; rig=rig, lines=lines, skippedsets=skippedsets)
     elseif x isa Branch
-      # At a branch need to revert the state of alive to what it was just after
-      # the block. (I.e. just before in terms of calculation order.)
-
-
-      br = branches[end-x.level]
-      a_b = x.cond ? merge(alive, copy(br[1])) : copy(br[1])
-      if !br[2] # If not branching to a loop.
-        a_b = liveness_(code[1:i-1]; rig=rig, lines=lines, alive=a_b, branches=branches, branch=branch, skippedsets=skippedsets, perm_alive=perm_alive)
-      else
-        # First pass of loop to get alive set after loop.
-        a_f = liveness_(code[1:i-1], rig=Ref{Int}(nv(rig)), alive=deepcopy(a_b), branches=branches, branch=branch, perm_alive=deepcopy(a_b))
-
-        a_diff = Dict(a => (add_vertex!(rig); nv(rig)) for (a, _) in setdiff(a_f, a_b))
-
-
-        a_new = merge(a_diff, a_b)
-        for (a, v) in a_diff
-          push!(lines, [])
-          for v_ in values(a_new)
-            v == v_ && continue
-            add_edge!(rig, v, v_)
-          end
-        end
-
-        # Second pass of loop using the calculated alive set.
-        a_b = liveness_(code[1:i-1], rig=rig, lines=lines, alive=a_new, branches=branches, branch=branch, skippedsets=skippedsets, perm_alive=deepcopy(a_new))
-
-        # for a in setdiff(a_f, a_b)
-        #   push!(lines, [])
-        # end
-        # liveness(s_sets, rig, lines, alive, branches)
-        # @show (1, alive)
-        # s_sets will be in reverse order as required.
-
-      #   for s in s_sets
-      #     set = get_instr(code, s[length(branches)+1:end])
-      #     @show set
-      #     if haskey(a_b, set.id)
-      #       push!(lines[a_b[set.id]], s)
-      #       @show set
-      #     else
-      #       push!(skippedsets, s)
-      #     end
-      #   end
-      end
-
-
-      # if x.cond
-      #   a_f = copy(alive)
-      #   # It should be possible to calculate this instead of starting over.
-      #   a_f = liveness_(code[1:i-1], deepcopy(rig), deepcopy(lines), a_f, branches, branch, loop, skippedsets)
-      #   @show alive
-      #   @show a_b, a_f
-      #   merge!(a_b, a_f)
-      # end
-      # TODO: Might want to give a warning about deadcode here on unconditional
-      # branches that come after some code.
-      alive = a_b
+      liveness_(x, code, i, alive, branch, branches, perm_alive, rig, lines; skippedsets=skippedsets)
       break
     end
   end
-
-  # if loop
-  #   return alive
-  # elseif !isempty(skippedsets)
-  #   println("Warning: Setting locals but values aren't used (Can replace with Drop).")
-  #   println((map(getindex, skippedsets), map(s -> s, skippedsets)))
-  # end
   return alive
 end
 
+get_line(code, branch) = apply_line(code, copy(branch), x->x)
+set_line(code, branch, y) = apply_line(code, copy(branch), x->y)
+modify_line(f, code, branch) = apply_line(code, copy(branch), f)
 
-get_instr(code, branch) = get_at_loc(code, deepcopy(branch), x->x)
-
-set_instr(code, branch, y) = get_at_loc(code, deepcopy(branch), x->y)
-modify_instr(f, code, branch) = get_at_loc(code, deepcopy(branch), f)
-
-function get_at_loc(code::Vector{Instruction}, branch, f)
-  b = shift!(branch)
-  if isempty(branch)
-    return code[b] = f(code[b])
-  else
-    return get_at_loc(code[b], branch, f)
-  end
-end
-get_at_loc(code::Func, branch, f) = get_at_loc(code.body.body, branch, f)
-get_at_loc(code::Union{Block, Loop}, branch, f) = get_at_loc(code.body, branch, f)
-function get_at_loc(code::If, branch, f)
-  b = shift!(branch)
-  if b == 1
-    return get_at_loc(code.t, branch, f)
-  elseif b == 2
-    return get_at_loc(code.f, branch, f)
-  end
-  error()
-end
+apply_line(i::Func, bs, f) = apply_line(i.body.body, bs, f)
+apply_line(i::Union{Block, Loop}, bs, f) = apply_line(i.body, bs, f)
+apply_line(i::If, bs, f) = bs |> shift! |> b -> apply_line(getfield(i, b), bs, f)
+apply_line(i::Vector, bs, f) = bs |> shift! |> b -> isempty(bs) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
 
 
 function allocate_registers(func::Func)
-  rig, alive, lines, skippedsets = func |> liveness
+  rig = SimpleGraph{Int}()
+  lines = Vector{Vector{Vector{Int}}}()
+  skippedsets = Vector{Vector{Int}}()
+  alive = liveness(func; rig=rig, lines=lines, skippedsets=skippedsets)
+
   coloring = rig |> greedy_color
-  length(alive) == length(func.params) || error("Not all parameters are used.")
-  @show coloring
-  @show alive
+
+  length(alive) == length(func.params) || println("Not all parameters are used.")
+
   c_to_r = Dict(coloring.colors[v] => r for (r, v) in alive)
   i = length(c_to_r) -1
   register_colours = [haskey(c_to_r, c) ? c_to_r[c] : i+=1 for c in 1:coloring.num_colors]
 
-  @show register_colours
-  @show coloring.colors
-
   col(value_id) = register_colours[coloring.colors[value_id]]
   for v in eachindex(lines)
     for l in lines[v]
-      modify_instr(func, l) do s
+      modify_line(func, l) do s
         s isa Local ? Local(col(v)) : (s isa SetLocal ? SetLocal(s.tee, col(v)) : error())
-        # s isa Local ? Local(v) : (s isa SetLocal ? SetLocal(s.tee, v) : error())
       end
     end
   end
 
+  # This is necessary as the register hasn't been updated and might interfere
+  # with operation.
+  # TODO: Drop removal, not possible in all cases. (E.g.: a conditional drop)
+  isempty(skippedsets) || println("Some sets aren't used, replacing with drop.")
   for s in skippedsets
-    set_instr(func, s, Drop())
+    set_line(func, s, Drop())
   end
-  @show coloring
-  @show func.params
-  @show func.locals
+
   locals = func.locals[1:coloring.num_colors-length(func.params)]
   return Func(func.name, func.params, func.returns, locals, func.body)
 end
