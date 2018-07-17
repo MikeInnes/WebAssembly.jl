@@ -104,11 +104,11 @@ fib(x) = x <= 1 ? 1 : fib(x - 1) + fib(x - 2)
 this(x) = pow(x + 1, x - 1)
 
 function rand_test_wasm(f, wasm_f, n_tests = 50, max = 100)
- for i in 1:n_tests
-   args = [rand(WebAssembly.jltype(typ)) % max for typ in wasm_f.params]
-   WebAssembly.interpretwasm(wasm_f, Dict(), args)[1] != f(args...) && return false
- end
- return true
+  for i in 1:n_tests
+    args = [rand(WebAssembly.jltype(typ)) % max for typ in wasm_f.params]
+    WebAssembly.interpretwasm(wasm_f, Dict(), args)[1] != f(args...) && return false
+  end
+  return true
 end
 
 function rand_test_module(fs, m, n_tests = 50, max = 10)
@@ -124,7 +124,7 @@ end
 
 @testset "Parse-Interpret" begin
 
-relu_wasm = relu_ifelse_wast
+relu_wasm = relu_ifelse_wasm
 
 relu_wasm_expected = Func(Symbol("#relu_Int64"), [i64], [i64], [], Block([Const(0), Local(0), Local(0), Const(0), Op(i64, :lt_s), Select(), Return()]))
 @test relu_wasm.body.body == relu_wasm_expected.body.body
@@ -138,7 +138,7 @@ relu_wasm_expected = Func(Symbol("#relu_Int64"), [i64], [i64], [], Block([Const(
 root = "test/wast/functions/"
 
 for test in tests
-  @test rand_test_wasm(test[1], test[2])
+  @test rand_test_wasm(test[1], test[2] |> WebAssembly.optimise)
 end
 
 # Sort of test module parsing
@@ -216,6 +216,8 @@ m2 = wast"""
     (return)))
 """
 @test m2.exports == [Export(:this, Symbol("#this_Int64"), :func), Export(:pow, Symbol("#pow_Int64_Int64"), :func), Export(:fib, Symbol("#fib_Int64"), :func)]
+
+map!(WebAssembly.optimise, m2.funcs)
 @test rand_test_module([fib, this, pow], m2)
 
 end
