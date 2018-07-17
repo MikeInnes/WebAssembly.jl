@@ -98,34 +98,36 @@ function liveness(func::Func)
   alive = Dict{Int, Int}()
   lines = Vector{Vector{Vector{Int}}}()
   skippedsets = Vector()
-  alive = liveness_(func.body.body, rig, lines, alive, [], [], false, skippedsets, Dict())
+  alive = liveness_(func.body.body; rig=rig, lines=lines, alive=alive, skippedsets=skippedsets)
   # @show alive
   @show skippedsets
   @show map(length, lines) |> sum
   return rig, alive, lines, skippedsets
 end
 
-function liveness_(code, rig::SimpleGraph=SimpleGraph(), lines::Vector{Vector{Vector{Int}}}=[], alive::Dict{Int, Int}=[], branches=[], branch=[], loop::Bool=false, skippedsets=Vector(), perm_alive=Dict())
+function liveness_(code; rig::Union{Ref{Int}, SimpleGraph}=Ref{Int}(0), lines::Union{Void, Vector{Vector{Vector{Int}}}}=nothing, alive::Dict{Int, Int}=Dict{Int, Int}(), branches=[], branch=[], skippedsets::Union{Void, Vector}=nothing, perm_alive::Dict=Dict())
   for i in length(code):-1:1
     x = code[i]
     if x isa Local
       # @show x, alive
       id = get!(alive, x.id) do
-        id = if loop && haskey(branches[end][1], x.id)
-          # println("So this happens, $x")
-          error("not any more!")
-          branches[end][1][x.id]
-        else
-          add_vertex!(rig)
-          push!(lines, [])
-          nv(rig)
-        end
+        # id =
+        # if loop && haskey(branches[end][1], x.id)
+        #   # println("So this happens, $x")
+        #   error("not any more!")
+        #   branches[end][1][x.id]
+        # else
+        lines != nothing && push!(lines, [])
+        rig isa Ref && return rig.x += 1
+        add_vertex!(rig)
+        id = nv(rig)
+        # end
         for v in values(alive)
           add_edge!(rig, id, v)
         end
         return id
       end
-      push!(lines[id], push!(deepcopy(branch), i))
+      lines != nothing && push!(lines[id], push!(deepcopy(branch), i))
       # @show code[i], i
     # @show alive
     elseif x isa SetLocal
@@ -135,17 +137,17 @@ function liveness_(code, rig::SimpleGraph=SimpleGraph(), lines::Vector{Vector{Ve
         if !haskey(perm_alive, x.id)
           delete!(alive, x.id)
         end
-        push!(lines[id], push!(deepcopy(branch), i))
+        lines != nothing && push!(lines[id], push!(deepcopy(branch), i))
         # @show code[i]
         # push!(lines, id => Ref(code, i))
       else
         # TODO: Add support for drop / backprop to remove need for Drop.
-        push!(skippedsets, push!(deepcopy(branch), i))
+        skippedsets != nothing && push!(skippedsets, push!(deepcopy(branch), i))
       end
     elseif x isa Block || x isa Loop
       push!(branches, (copy(alive), x isa Loop))
       push!(branch, i)
-      alive = liveness_(code[i].body, rig, lines, alive, branches, branch, loop, skippedsets, perm_alive)
+      alive = liveness_(code[i].body; rig=rig, lines=lines, alive=alive, branches=branches, branch=branch, skippedsets=skippedsets, perm_alive=perm_alive)
       @show sum(map(length, lines))
       @show alive
       pop!(branch)
@@ -155,10 +157,11 @@ function liveness_(code, rig::SimpleGraph=SimpleGraph(), lines::Vector{Vector{Ve
       a_f = copy(alive)
       push!(branches, (copy(alive), false))
       push!(branch, i, 1)
-      a_t = liveness_(code[i].t, rig, lines, a_t, branches, branch, loop, skippedsets, perm_alive)
+      a_t = liveness_(code[i].t; rig=rig, lines=lines, alive=a_t, branches=branches, branch=branch, skippedsets=skippedsets, perm_alive=perm_alive)
       pop!(branch)
       push!(branch, 2)
-      a_f = liveness_(code[i].f, rig, lines, a_f, branches, branch, loop, skippedsets, perm_alive)
+      a_f = liveness_(code[i].f; rig=rig, lines=lines, alive=a_f, branches=branches, branch=branch, skippedsets=skippedsets, perm_alive=perm_alive)
+      # a_f = liveness_(code[i].f, rig, lines, a_f, branches, branch, loop, skippedsets, perm_alive)
       pop!(branch)
       pop!(branches)
       alive = merge(a_t, a_f)
@@ -170,14 +173,10 @@ function liveness_(code, rig::SimpleGraph=SimpleGraph(), lines::Vector{Vector{Ve
       br = branches[end-x.level]
       a_b = x.cond ? merge(alive, copy(br[1])) : copy(br[1])
       if !br[2] # If not branching to a loop.
-        a_b = liveness_(code[1:i-1], rig, lines, a_b, branches, branch, loop, skippedsets, perm_alive)
+        a_b = liveness_(code[1:i-1]; rig=rig, lines=lines, alive=a_b, branches=branches, branch=branch, skippedsets=skippedsets, perm_alive=perm_alive)
       else
-        perm_alive = deepcopy(a_b)
-        # if x.cond
-          # push!(branches)
-        s_sets = skippedsets;#Vector();
-        # a_f = liveness_(code[1:i-1], deepcopy(rig), deepcopy(lines), deepcopy(a_b), deepcopy(branches), deepcopy(branch), deepcopy(true), deepcopy(s_sets), deepcopy(perm_alive))
-        a_f = liveness_(code[1:i-1], deepcopy(rig), deepcopy(lines), deepcopy(a_b), deepcopy(branches), deepcopy(branch), deepcopy(true), deepcopy(s_sets), deepcopy(perm_alive))
+        # First pass of loop to get alive set after loop.
+        a_f = liveness_(code[1:i-1], rig=Ref{Int}(nv(rig)), alive=deepcopy(a_b), branches=branches, branch=branch, perm_alive=deepcopy(a_b))
 
         a_diff = Dict(a => (add_vertex!(rig); nv(rig)) for (a, _) in setdiff(a_f, a_b))
 
@@ -191,8 +190,8 @@ function liveness_(code, rig::SimpleGraph=SimpleGraph(), lines::Vector{Vector{Ve
           end
         end
 
-
-        a_b = liveness_(code[1:i-1], rig, lines, a_new, branches, branch, true, s_sets, deepcopy(a_new))
+        # Second pass of loop using the calculated alive set.
+        a_b = liveness_(code[1:i-1], rig=rig, lines=lines, alive=a_new, branches=branches, branch=branch, skippedsets=skippedsets, perm_alive=deepcopy(a_new))
 
         # for a in setdiff(a_f, a_b)
         #   push!(lines, [])
@@ -229,12 +228,12 @@ function liveness_(code, rig::SimpleGraph=SimpleGraph(), lines::Vector{Vector{Ve
     end
   end
 
-  if loop
-    return alive
-  elseif !isempty(skippedsets)
-    println("Warning: Setting locals but values aren't used (Can replace with Drop).")
-    println((map(getindex, skippedsets), map(s -> s, skippedsets)))
-  end
+  # if loop
+  #   return alive
+  # elseif !isempty(skippedsets)
+  #   println("Warning: Setting locals but values aren't used (Can replace with Drop).")
+  #   println((map(getindex, skippedsets), map(s -> s, skippedsets)))
+  # end
   return alive
 end
 
