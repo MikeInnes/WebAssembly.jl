@@ -319,6 +319,107 @@ function stack_locals(b, lines)
   return b
 end
 
+function useless_sets(b)
+  skippedsets = Vector{Vector{Int}}()
+  liveness(b; skippedsets=skippedsets)
+  filter!(skippedsets) do s
+    modify_line(x -> x.tee ? Nop() : Drop(), b, s) == Drop()
+  end
+  for s in skippedsets
+    drop_removal(get_line(b.body, s[1:end-1]), s[end])
+  end
+  return b
+end
+
+# It's safe to remove a drop in most circumstances, since the stack being
+# dropped from is encapsulated to the current block it shouldn't be too
+# complicated either. However, if there is a branch between the drop and the
+# value to be dropped being added to the stack, it is unsafe to remove and
+# should be left in place.
+
+function drop_removal(b, i)
+  removals = drop_removal(b, Ref(i))
+  @show removals
+  for r in removals
+    b[r] = Nop()
+  end
+end
+
+
+# Also ideally blocks should be removed in reverse order because there's a
+# chance removing it will remove the drop that came before it.
+# function drop_removal(b::Vector{Instruction}, i::Ref{Int}, removals=nothing)
+function drop_removal(b::Vector{Instruction}, i::Ref{Int}, removals=Vector{Int}())
+  # j = Ref{Int}(i - 1)
+  # i_ = i.x
+  # @show i
+  removals != nothing && push!(removals, i.x)
+  # for k in 1:num_args(b[i])
+  #   change = 0
+  #   @show "back again"
+  #   while change <= 0
+  #     change += stack_change(b[j -= 1])
+  #     b[j] isa Branch && return []
+  #   end
+  #   @show "here"
+  #   drop_removal(b, j, removals)
+  # end
+  # println("talkiwjhl")
+  args_left = num_args(b[i.x])
+  @show args_left
+  while args_left != 0
+    @show removals
+    op = b[i.x-=1]
+    @show op, num_res(op)
+    op isa Branch && return []
+    res = num_res(op)
+    res > args_left && return []
+    remove = res <= args_left && res != 0
+
+    # If it's a tee_local, it needs to become set_local, not be removed.
+    # Similar for blocks, they will lose their result.
+    rmResult = op isa SetLocal && op.tee || op isa Block && false
+    # args_left += args
+    @show args_left
+
+    if remove
+      args_left -= res
+      if !rmResult
+        # @show "what"
+        drop_removal(b, i, removals)
+        @show i
+      else
+        # Will be clear when the result needs to be held
+        push!(removals, i.x)
+      end
+    elseif !remove
+      drop_removal(b, i, nothing)
+    end
+
+
+    # change = 0
+    # @show "back again"
+    # while change <= 0
+    #   change += stack_change(b[j -= 1])
+    #   b[j] isa Branch && return []
+    # end
+    # @show "here"
+    # drop_removal(b, j, removals)
+  end
+  return removals
+end
+
+num_args(i::Op) = op_num_args[i.name]
+num_args(i::Select) = 3
+num_args(i::Union{Block, Loop, If, Nop, Const, Local}) = 0
+num_args(i::Union{Convert, Global, Drop, SetLocal}) = 1
+
+num_res(i::Op) = 1
+num_res(i::Select) = 1
+num_res(i::SetLocal) = i.tee ? 1 : 0
+# Changes when results added
+num_res(i::Union{Nop, Block, Loop, If, Drop}) = 0
+num_res(i::Union{Const, Convert, Local, Global, SetLocal}) = 1
 
 const op_stack_change =
   Dict(
@@ -369,3 +470,7 @@ const op_stack_change =
     :max      =>  -1,
     :copysign =>  -1
 )
+
+# Dict assumes all the operations in op_stack_change return 1 value, if that
+# stops being true do this in a better way.
+const op_num_args = Dict(n => -c + 1 for (n, c) in op_stack_change)
