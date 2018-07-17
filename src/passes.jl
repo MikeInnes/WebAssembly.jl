@@ -240,3 +240,88 @@ function drawGraph(filename, graph)
   # draw_layout_adj(am, loc_x, loc_y, filename=filename, arrowlengthfrac=0)
   draw_layout_adj(am, loc_x, loc_y, filename=filename)
 end
+
+# The lines array calculated whilst getting the liveness graph will come in
+# handy here. It will be in reverse order of appearance, so the final element of
+# each values array will be the set, and all the other elements will be gets.
+
+# This is complicated slightly by loops, where sets can appear elsewhere in the
+# array. For now, only look at values that match the criteria of having only one
+# set and being located at the end.
+
+# A further issue is that the stack can't have just anything on it when exiting
+# a block. a block can either add one thing to the stack (as specified by the
+# result) or nothing. The fact this is specified makes working out stack changes
+# much simpler, but also means I can only use this optimisation once. for values
+# that exit a block. For the time being I'll add the stipulation that
+# optimisation can only operate on one level.
+
+# If a set is followed by one get, we have the opportunity to replace it with
+# the stack. If a set is followed by multiple gets, we can still place it on the
+# stack, but the first get must become a tee. Branches and Ifs complicate how
+# "followed by multiple gets" is calculated, but the stipulation of staying in
+# the same level avoids this.
+
+# The stack change function takes an Instruction and returns how it alters the
+# stack.
+
+# Once results are supported (they are in another pull) this could be 0 or 1.
+stack_change(i::Union{Block, Loop, If, Nop, Convert}) = 0
+stack_change(i::Union{Drop, Local})  = -1
+stack_change(i::SetLocal) = i.tee ? 0 : -1
+stack_change(i::Select) = -2
+stack_change(i::Op) =
+# stack_change(i::Local) = 0
+
+const op_stack_change =
+  Dict(
+    :eqz	  =>  0,
+    :eq	    =>  -1,
+    :ne	    =>  -1,
+    :lt_s	  =>  -1,
+    :lt_u	  =>  -1,
+    :gt_s	  =>  -1,
+    :gt_u	  =>  -1,
+    :le_s	  =>  -1,
+    :le_u	  =>  -1,
+    :ge_s	  =>  -1,
+    :ge_u	  =>  -1,
+    :clz    =>  0,
+    :ctz    =>  0,
+    :popcnt =>  0,
+    :add    =>  -1,
+    :sub    =>  -1,
+    :mul    =>  -1,
+    :div_s  =>  -1,
+    :div_u  =>  -1,
+    :rem_s  =>  -1,
+    :rem_u  =>  -1,
+    :and    =>  -1,
+    :or     =>  -1,
+    :xor    =>  -1,
+    :shl    =>  -1,
+    :shr_s  =>  -1,
+    :shr_u  =>  -1,
+    # Check these two.
+    :rotl   =>  -1,
+    :rotr   =>  -1,
+
+    :lt       =>  -1,
+    :gt       =>  -1,
+    :le       =>  -1,
+    :ge       =>  -1,
+    :abs      =>  0,
+    :neg      =>  0,
+    :ceil     =>  0,
+    :floor    =>  0,
+    :trunc    =>  0,
+    :nearest  =>  0,
+    :sqrt     =>  0,
+    :div      =>  -1,
+    :min      =>  -1,
+    :max      =>  -1,
+    :copysign =>  -1,
+
+
+
+)
