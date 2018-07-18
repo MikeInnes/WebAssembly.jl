@@ -86,9 +86,15 @@ optimise(b::Block) = b |> deadcode |> makeifs |> rmblocks
 function optimise(m::Module, funcs=nothing)
   funcs = funcs == nothing ? Dict(f.name => f for f in m.funcs) : funcs
   map!(m.funcs, m.funcs) do f
-    body = optimise(f.body) |> b -> liveness_optimisations(b, funcs)
+    body = optimise(f.body)
+    # body = optimise(f.body) |> b -> stack_locals(b, funcs)#b -> liveness_optimisations(b, funcs)
+    body = optimise(f.body) #|> b -> liveness_optimisations(b, funcs)
+    # body = body |> b -> extra_sets(b, funcs)#b -> liveness_optimisations(b, funcs)
     f = Func(f.name, f.params, f.returns, f.locals, body)
-    allocate_registers(f)
+    @show f
+    # println("new call <-------------------")
+    # @show f
+    # @show allocate_registers(f)
   end
   return m
 end
@@ -99,7 +105,7 @@ using LightGraphs
 liveness(code::Func, as...; ks...) = liveness(code.body.body, as...; ks...)
 liveness(code::Block, as...; ks...) = liveness(code.body, as...; ks...)
 
-function liveness_(x::Local, i, alive, branch, rig, lines, as...)
+function liveness_(x::Local, i, alive, branch, rig, lines, pa, es, types, values_of_type)
   id = get!(alive, x.id) do
     lines != nothing && push!(lines, [])
     rig isa Ref && return rig.x += 1
@@ -108,12 +114,22 @@ function liveness_(x::Local, i, alive, branch, rig, lines, as...)
     for v in values(alive)
       add_edge!(rig, id, v)
     end
+    if types != nothing
+      typ = types[x.id + 1]
+      for (t, vs) in values_of_type
+        t == typ && continue
+        for v in vs
+          add_edge!(rig, id, v)
+        end
+      end
+      push!(get!(values_of_type, typ, Vector{Int}()), id)
+    end
     return id
   end
   lines != nothing && push!(lines[id], push!(copy(branch), i))
 end
 
-function liveness_(x::SetLocal, i, alive, branch, rig, lines, perm_alive, extra_sets)
+function liveness_(x::SetLocal, i, alive, branch, rig, lines, perm_alive, extra_sets, types, values_of_type)
   if haskey(alive, x.id)
     id = alive[x.id]
     if !haskey(perm_alive, x.id)
@@ -133,37 +149,51 @@ function liveness_(x::Union{Block, Loop}, i, alive, branch, branches, as... ; ks
   pop!(branches)
 end
 
-function liveness_(x::If, i, alive, branch, as... ; ks...)
+function liveness_(x::If, i, alive, branch, branches, perm_alive ; ks...)
   push!(branch, i)
   a_t = copy(alive)
-  liveness_(Block(x.t), 1, a_t, branch, as...; ks...)
-  liveness_(Block(x.f), 2, alive, branch, as...; ks...)
+  liveness_(Block(x.t), 1, a_t, branch, branches, perm_alive; ks...)
+  perm_alive = merge(perm_alive, Dict(setdiff(a_t, alive)))
+  merge!(alive, perm_alive)
+  liveness_(Block(x.f), 2, alive, branch, branches, perm_alive; ks...)
   pop!(branch)
   merge!(alive, a_t)
 end
 
-function liveness_(x::Branch, code, i, alive, branch, branches, perm_alive, rig, lines; ks...)
+function liveness_(x::Branch, code, i, alive, branch, branches, perm_alive, rig, lines, types, values_of_type; ks...)
   br = branches[end-x.level]
-  x.cond ? merge!(alive, copy(br[1])) : merge!(empty!(alive), copy(br[1]))
+  perm_alive = merge(perm_alive, Dict(setdiff(alive, br[1])))
+  x.cond ? merge!(alive, copy(br[1])) : merge!(empty!(alive), copy(br[1]), perm_alive)
   if !br[2] # If not branching to a loop.
-    liveness(code[1:i-1], alive, branch, branches, perm_alive; rig=rig, lines=lines, ks...)
+    @show perm_alive
+    liveness(code[1:i-1], alive, branch, branches, perm_alive; rig=rig, lines=lines, types=types, values_of_type=values_of_type, ks...)
   else
     # First pass of loop to get alive set after loop.
-    a_f = liveness(code[1:i-1], copy(alive), branch, branches, alive; rig=Ref{Int}(rig isa Ref ? rig.x : nv(rig)))
+    a_f = liveness(code[1:i-1], copy(alive), branch, branches, merge(perm_alive, alive); rig=Ref{Int}(rig isa Ref ? rig.x : nv(rig)))
 
     a_diff = Dict(a => rig isa Ref ? rig.x += 1 : (add_vertex!(rig); nv(rig)) for (a, _) in setdiff(a_f, alive))
     merge!(alive, a_diff)
-    for (a, v) in a_diff
+    for (l, v) in a_diff
       lines != nothing && push!(lines, [])
       rig isa Ref && continue
       for v_ in values(alive)
         v == v_ && continue
         add_edge!(rig, v, v_)
       end
+      if types != nothing
+        typ = types[l + 1]
+        for (t, vs) in values_of_type
+          t == typ && continue
+          for v_ in vs
+            add_edge!(rig, v, v_)
+          end
+        end
+        push!(get!(values_of_type, typ, Vector{Int}()), v)
+      end
     end
 
     # Second pass of loop using the calculated alive set.
-    liveness(code[1:i-1], alive, branch, branches, copy(alive); rig=rig, lines=lines, ks...)
+    liveness(code[1:i-1], alive, branch, branches, merge(perm_alive, a_diff); rig=rig, lines=lines, types=types, values_of_type=values_of_type, ks...)
   end
 end
 
@@ -178,6 +208,10 @@ end
 # alive is essentially a set of currently used registers, but with the id of the
 # value stored.
 
+# For the different primitive types, it would be possible to enforce calling
+# this function multiple times. But an alternative is to ensure they are assigned
+# different registers by connecting them on the graph to all values of different
+# type.
 function liveness( code::Vector{Instruction}
                  , alive::Dict{Int, Int}=Dict{Int, Int}()
                  , branch::Vector{Int}=Vector{Int}()
@@ -186,15 +220,18 @@ function liveness( code::Vector{Instruction}
                  ; rig::Union{Ref{Int}, SimpleGraph{Int}}=Ref{Int}(0)
                  , lines::Union{Void, Vector{Vector{Vector{Int}}}}=nothing
                  , extra_sets::Union{Void, Vector{Vector{Int}}}=nothing
+                 , types::Union{Void, Vector{WType}}=nothing
+                 , values_of_type::Dict{WType, Vector{Int}}=Dict{WType, Vector{Int}}()
                  )
   for i in length(code):-1:1
+    @show alive
     x = code[i]
     if x isa Local || x isa SetLocal
-      liveness_(x, i, alive, branch, rig, lines, perm_alive, extra_sets)
+      liveness_(x, i, alive, branch, rig, lines, perm_alive, extra_sets, types, values_of_type)
     elseif x isa Block || x isa Loop || x isa If
-      liveness_(x, i, alive, branch, branches, perm_alive; rig=rig, lines=lines, extra_sets=extra_sets)
+      liveness_(x, i, alive, branch, branches, perm_alive; rig=rig, lines=lines, extra_sets=extra_sets, types=types, values_of_type=values_of_type)
     elseif x isa Branch
-      liveness_(x, code, i, alive, branch, branches, perm_alive, rig, lines; extra_sets=extra_sets)
+      liveness_(x, code, i, alive, branch, branches, perm_alive, rig, lines, types, values_of_type; extra_sets=extra_sets)
       break
     end
   end
@@ -212,23 +249,55 @@ apply_line(i::Union{Block, Loop}, bs, f) = apply_line(i.body, bs, f)
 apply_line(i::If, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> apply_line(getfield(i, b), bs, f)
 
 # apply_line(i::Vector, bs, f) = (@show bs) |> shift! |> b -> isempty(bs) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
-apply_line(i::Vector, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> isempty(bs) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
+apply_line(i::Vector, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> isempty(bs) && !(typeof(i[b]) ∈ [Block, Loop, If]) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
 
 
 function allocate_registers(func::Func)
   rig = SimpleGraph{Int}()
   lines = Vector{Vector{Vector{Int}}}()
   extra_sets = Vector{Vector{Int}}()
-  alive = liveness(func; rig=rig, lines=lines, extra_sets=extra_sets)
+  types = vcat(func.params, func.locals)
+  values_of_type=Dict{WType, Vector{Int}}()
+  alive = liveness(func; rig=rig, lines=lines, extra_sets=extra_sets, types=types, values_of_type=values_of_type)
+
+  # Fixup for when not all parameters are used.
+  if !all(i -> haskey(alive, i-1), eachindex(func.params))
+    for i in eachindex(func.params)
+      if !haskey(alive, i-1)
+        add_vertex!(rig)
+        id = nv(rig)
+        push!(alive, i-1 => nv(rig))
+        typ = func.params[i]
+        for (t, vs) in values_of_type
+          t == typ && continue
+          for v_ in vs
+            add_edge!(rig, id, v_)
+          end
+        end
+      end
+    end
+    for v in values(alive)
+      for v_ in values(alive)
+        v == v_ && continue
+        add_edge!(rig, v, v_)
+        println("this")
+      end
+    end
+  end
+  # drawGraph("what.svg", rig)
 
   coloring = rig != SimpleGraph() ? rig |> greedy_color : LightGraphs.coloring(0, Vector{Int}())
+  @show coloring
 
-  length(alive) == length(func.params) || println("Not all parameters are used.")
-
-  c_to_r = Dict(coloring.colors[v] => r for (r, v) in alive)
-  i = length(c_to_r) -1
+  rs = Set(0:coloring.num_colors-1)
+  c_to_r = Dict(coloring.colors[alive[i]] => i for i in 0:length(func.params)-1)
+  # c_to_r = [coloring.colors[alive[i]] for i in 0:length(alive)-1]
+  @show c_to_r
+  length(c_to_r) == length(func.params) || error()
+  i = length(func.params) - 1
   register_colours = [haskey(c_to_r, c) ? c_to_r[c] : i+=1 for c in 1:coloring.num_colors]
-
+  @show register_colours
+  @show coloring.colors
   col(value_id) = register_colours[coloring.colors[value_id]]
   for v in eachindex(lines)
     for l in lines[v]
@@ -237,6 +306,7 @@ function allocate_registers(func::Func)
       end
     end
   end
+  @show func
 
   # This is necessary as the register hasn't been updated and might interfere
   # with operation.
@@ -247,6 +317,21 @@ function allocate_registers(func::Func)
   end
 
   locals = func.locals[1:coloring.num_colors-length(func.params)]
+  # @show locals
+  # locals = Dict()
+  locals = Dict(zip(0:length(func.params)-1, func.params))
+  # for i in eachindex(func.params)
+  #   push!(locals, i-1 => func.params[i])
+  # end
+  for (t, vs) in values_of_type
+    for v in vs
+      get!(locals, col(v), t) == t || error("Bad assignment")
+    end
+  end
+  # @show locals
+  # # locals = [get!(locals, i, func.params[i]) for i in length(func.params)+1:length(locals)]
+  locals = [locals[i] for i in length(func.params):coloring.num_colors-1]
+  # @show locals
   return Func(func.name, func.params, func.returns, locals, func.body)
 end
 
@@ -272,13 +357,15 @@ end
 function stack_locals(b, funcs)
   lines = Vector{Vector{Vector{Int}}}()
   liveness(b; lines=lines)
-  return nops(stack_locals(b, lines))
+  return nops(stack_locals(b, lines, funcs))
 end
 
 function stack_locals(b, lines, funcs)
   filter!(lines) do ls
     (length(ls) >= 2 && get_line(b, ls[end]) isa SetLocal) || return false
-    return all(e->e[1:end-1]==ls[1][1:end-1], ls)
+    ls[end][1:end-1]==ls[end-1][1:end-1] || return false
+    return all(e->!(e isa Branch), (@show get_line(b, ls[end][1:end-1]))[ls[end][end]:ls[end-1][end]])
+    # return all(e->e[1:end-1]==ls[1][1:end-1], ls)
   end
   len = typemax(Int)
   while length(lines) < len
@@ -298,11 +385,11 @@ function stack_locals(b, lines, funcs)
   return b
 end
 
-function extra_sets(b)
+function extra_sets(b, funcs)
   es = Vector{Vector{Int}}()
   lss = Vector{Vector{Vector{Int}}}()
   liveness(b; extra_sets=es, lines=lss);
-  return nops(extra_sets(b, es, lss))
+  return nops(extra_sets(b, es, lss, funcs))
 end
 
 # Removes sets that don't later use the value. If removing the set creates more
