@@ -80,14 +80,26 @@ function rmblocks(code)
   end
 end
 
-optimise(b) = b |> deadcode |> makeifs |> rmblocks |> liveness_optimisations
+optimise(b::Block) = b |> deadcode |> makeifs |> rmblocks
+
+# Funcs is a mapping from internalname to function defintion.
+function optimise(m::Module, funcs=nothing)
+  funcs = funcs == nothing ? Dict(f.name => f for f in m.funcs) : funcs
+  map!(m.funcs, m.funcs) do f
+    body = optimise(f.body) |> b -> liveness_optimisations(b, funcs)
+    locals, body = allocate_registers(body, f.params, f.locals)
+    Func(f.name, f.params, f.returns, locals, body)
+  end
+  return m
+end
+
 
 using LightGraphs
 
 liveness(code::Func, as...; ks...) = liveness(code.body.body, as...; ks...)
 liveness(code::Block, as...; ks...) = liveness(code.body, as...; ks...)
 
-function liveness_(x::Local, i, alive, branch, rig, lines, as...)
+function liveness_(x::Local, i, alive, branch, rig, lines, pa, es, types, values_of_type)
   id = get!(alive, x.id) do
     lines != nothing && push!(lines, [])
     rig isa Ref && return rig.x += 1
@@ -96,12 +108,22 @@ function liveness_(x::Local, i, alive, branch, rig, lines, as...)
     for v in values(alive)
       add_edge!(rig, id, v)
     end
+    if types != nothing
+      typ = types[x.id + 1]
+      for (t, vs) in values_of_type
+        t == typ && continue
+        for v in vs
+          add_edge!(rig, id, v)
+        end
+      end
+      push!(get!(values_of_type, typ, Vector{Int}()), id)
+    end
     return id
   end
   lines != nothing && push!(lines[id], push!(copy(branch), i))
 end
 
-function liveness_(x::SetLocal, i, alive, branch, rig, lines, perm_alive, skippedsets)
+function liveness_(x::SetLocal, i, alive, branch, rig, lines, perm_alive, extra_sets, types, values_of_type)
   if haskey(alive, x.id)
     id = alive[x.id]
     if !haskey(perm_alive, x.id)
@@ -109,7 +131,7 @@ function liveness_(x::SetLocal, i, alive, branch, rig, lines, perm_alive, skippe
     end
     lines != nothing && push!(lines[id], push!(copy(branch), i))
   else
-    skippedsets != nothing && push!(skippedsets, push!(copy(branch), i))
+    extra_sets != nothing && push!(extra_sets, push!(copy(branch), i))
   end
 end
 
@@ -121,37 +143,51 @@ function liveness_(x::Union{Block, Loop}, i, alive, branch, branches, as... ; ks
   pop!(branches)
 end
 
-function liveness_(x::If, i, alive, branch, as... ; ks...)
+function liveness_(x::If, i, alive, branch, branches, perm_alive ; ks...)
   push!(branch, i)
   a_t = copy(alive)
-  liveness_(Block(x.t), 1, a_t, branch, as...; ks...)
-  liveness_(Block(x.f), 2, alive, branch, as...; ks...)
+  liveness_(Block(x.t), 1, a_t, branch, branches, perm_alive; ks...)
+  perm_alive = merge(perm_alive, Dict(setdiff(a_t, alive)))
+  merge!(alive, perm_alive)
+  liveness_(Block(x.f), 2, alive, branch, branches, perm_alive; ks...)
   pop!(branch)
   merge!(alive, a_t)
 end
 
-function liveness_(x::Branch, code, i, alive, branch, branches, perm_alive, rig, lines; ks...)
+function liveness_(x::Branch, code, i, alive, branch, branches, perm_alive, rig, lines, types, values_of_type; ks...)
   br = branches[end-x.level]
-  x.cond ? merge!(alive, copy(br[1])) : merge!(empty!(alive), copy(br[1]))
+  perm_alive = merge(perm_alive, Dict(setdiff(alive, br[1])))
+  x.cond ? merge!(alive, copy(br[1])) : merge!(empty!(alive), copy(br[1]), perm_alive)
   if !br[2] # If not branching to a loop.
-    liveness(code[1:i-1], alive, branch, branches, perm_alive; rig=rig, lines=lines, ks...)
+    liveness(code[1:i-1], alive, branch, branches, perm_alive; rig=rig, lines=lines, types=types, values_of_type=values_of_type, ks...)
   else
     # First pass of loop to get alive set after loop.
-    a_f = liveness(code[1:i-1], copy(alive), branch, branches, alive; rig=Ref{Int}(rig isa Ref ? rig.x : nv(rig)))
+    perm_alive = merge(perm_alive, alive)
+    a_f = liveness(code[1:i-1], copy(alive), branch, branches, perm_alive; rig=Ref{Int}(rig isa Ref ? rig.x : nv(rig)))
 
     a_diff = Dict(a => rig isa Ref ? rig.x += 1 : (add_vertex!(rig); nv(rig)) for (a, _) in setdiff(a_f, alive))
     merge!(alive, a_diff)
-    for (a, v) in a_diff
+    for (l, v) in a_diff
       lines != nothing && push!(lines, [])
       rig isa Ref && continue
       for v_ in values(alive)
         v == v_ && continue
         add_edge!(rig, v, v_)
       end
+      if types != nothing
+        typ = types[l + 1]
+        for (t, vs) in values_of_type
+          t == typ && continue
+          for v_ in vs
+            add_edge!(rig, v, v_)
+          end
+        end
+        push!(get!(values_of_type, typ, Vector{Int}()), v)
+      end
     end
 
     # Second pass of loop using the calculated alive set.
-    liveness(code[1:i-1], alive, branch, branches, copy(alive); rig=rig, lines=lines, ks...)
+    liveness(code[1:i-1], alive, branch, branches, merge(perm_alive, a_diff); rig=rig, lines=lines, types=types, values_of_type=values_of_type, ks...)
   end
 end
 
@@ -161,11 +197,15 @@ end
 # lines takes a value id and returns references to all the get/sets in the code
 # so they can be updated quickly later.
 
-# skippedsets is any encountered set where the value isn't used.
+# extra_sets is any encountered set where the value isn't used.
 
 # alive is essentially a set of currently used registers, but with the id of the
 # value stored.
 
+# For the different primitive types, it would be possible to enforce calling
+# this function multiple times. But an alternative is to ensure they are assigned
+# different registers by connecting them on the graph to all values of different
+# type.
 function liveness( code::Vector{Instruction}
                  , alive::Dict{Int, Int}=Dict{Int, Int}()
                  , branch::Vector{Int}=Vector{Int}()
@@ -173,16 +213,18 @@ function liveness( code::Vector{Instruction}
                  , perm_alive::Dict{Int, Int}=Dict{Int, Int}()
                  ; rig::Union{Ref{Int}, SimpleGraph{Int}}=Ref{Int}(0)
                  , lines::Union{Void, Vector{Vector{Vector{Int}}}}=nothing
-                 , skippedsets::Union{Void, Vector{Vector{Int}}}=nothing
+                 , extra_sets::Union{Void, Vector{Vector{Int}}}=nothing
+                 , types::Union{Void, Vector{WType}}=nothing
+                 , values_of_type::Dict{WType, Vector{Int}}=Dict{WType, Vector{Int}}()
                  )
   for i in length(code):-1:1
     x = code[i]
     if x isa Local || x isa SetLocal
-      liveness_(x, i, alive, branch, rig, lines, perm_alive, skippedsets)
+      liveness_(x, i, alive, branch, rig, lines, perm_alive, extra_sets, types, values_of_type)
     elseif x isa Block || x isa Loop || x isa If
-      liveness_(x, i, alive, branch, branches, perm_alive; rig=rig, lines=lines, skippedsets=skippedsets)
+      liveness_(x, i, alive, branch, branches, perm_alive; rig=rig, lines=lines, extra_sets=extra_sets, types=types, values_of_type=values_of_type)
     elseif x isa Branch
-      liveness_(x, code, i, alive, branch, branches, perm_alive, rig, lines; skippedsets=skippedsets)
+      liveness_(x, code, i, alive, branch, branches, perm_alive, rig, lines, types, values_of_type; extra_sets=extra_sets)
       break
     end
   end
@@ -195,34 +237,56 @@ modify_line(f, code, branch) = apply_line(code, copy(branch), f)
 
 apply_line(i::Func, bs, f) = apply_line(i.body.body, bs, f)
 apply_line(i::Union{Block, Loop}, bs, f) = apply_line(i.body, bs, f)
-# apply_line(i::If, bs, f) = bs |> shift! |> b -> apply_line(getfield(i, b), bs, f)
-apply_line(i::If, bs, f) = bs |> shift! |> b -> getfield(i, b) |> i -> isempty(bs) ? i : apply_line(i, bs, f)
+apply_line(i::If, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> apply_line(getfield(i, b), bs, f)
 
 # apply_line(i::Vector, bs, f) = (@show bs) |> shift! |> b -> isempty(bs) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
-apply_line(i::Vector, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> isempty(bs) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
+apply_line(i::Vector, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> isempty(bs) && !(typeof(i[b]) ∈ [Block, Loop, If]) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
 
+allocate_registers(f::Func) = Func(f.name, f.params, f.returns, allocate_registers(f.body, f.params, f.locals)...)
 
-function allocate_registers(func::Func)
+function allocate_registers(b::Block, params, locals)
   rig = SimpleGraph{Int}()
   lines = Vector{Vector{Vector{Int}}}()
-  skippedsets = Vector{Vector{Int}}()
-  alive = liveness(func; rig=rig, lines=lines, skippedsets=skippedsets)
+  extra_sets = Vector{Vector{Int}}()
+  types = vcat(params, locals)
+  values_of_type=Dict{WType, Vector{Int}}()
+  alive = liveness(b; rig=rig, lines=lines, extra_sets=extra_sets, types=types, values_of_type=values_of_type)
 
-  # @show fieldnames(rig)
-  # @show field
-  # @show
+  # Make sure all parameters are in the alive set.
+  for i in eachindex(params)
+    if !haskey(alive, i-1)
+      add_vertex!(rig)
+      id = nv(rig)
+      push!(alive, i-1 => nv(rig))
+      typ = params[i]
+      for (t, vs) in values_of_type
+        t == typ && continue
+        for v_ in vs
+          add_edge!(rig, id, v_)
+        end
+      end
+    end
+  end
+
+  # Make sure parameters can't be given the same colour.
+  for v in values(alive)
+    for v_ in values(alive)
+      v == v_ && continue
+      add_edge!(rig, v, v_)
+      println("this")
+    end
+  end
+
   coloring = rig != SimpleGraph() ? rig |> greedy_color : LightGraphs.coloring(0, Vector{Int}())
 
-  length(alive) == length(func.params) || println("Not all parameters are used.")
-
-  c_to_r = Dict(coloring.colors[v] => r for (r, v) in alive)
-  i = length(c_to_r) -1
+  rs = Set(0:coloring.num_colors-1)
+  c_to_r = Dict(coloring.colors[alive[i]] => i for i in 0:length(params)-1)
+  i = length(params) - 1
   register_colours = [haskey(c_to_r, c) ? c_to_r[c] : i+=1 for c in 1:coloring.num_colors]
-
   col(value_id) = register_colours[coloring.colors[value_id]]
   for v in eachindex(lines)
     for l in lines[v]
-      modify_line(func, l) do s
+      modify_line(b, l) do s
         s isa Local ? Local(col(v)) : (s isa SetLocal ? SetLocal(s.tee, col(v)) : error())
       end
     end
@@ -230,151 +294,121 @@ function allocate_registers(func::Func)
 
   # This is necessary as the register hasn't been updated and might interfere
   # with operation.
-  # TODO: Drop removal, not possible in all cases. (E.g.: a conditional drop)
-  isempty(skippedsets) || println("Some sets aren't used, replacing with drop (nop for tee).")
-  for s in skippedsets
-    modify_line(x -> x.tee ? Nop() : Drop(), func, s)
+  isempty(extra_sets) || println("Some sets aren't used, replacing with drop (nop for tee).")
+  for s in extra_sets
+    modify_line(x -> x.tee ? Nop() : Drop(), b, s)
   end
 
-  locals = func.locals[1:coloring.num_colors-length(func.params)]
-  return Func(func.name, func.params, func.returns, locals, func.body)
+  # Calculate the new locals
+  locals = Dict(zip(0:length(params)-1, params))
+  for (t, vs) in values_of_type
+    # Going through all vs not strictly necessary, but makes for a good assertion.
+    for v in vs
+      get!(locals, col(v), t) == t || error("Bad assignment")
+    end
+  end
+  locals = [locals[i] for i in length(params):coloring.num_colors-1]
+  return locals, b
 end
 
-using GraphLayout
-function drawGraph(filename, graph)
-  # Output the graph
-  am = Matrix(adjacency_matrix(graph))
-  loc_x, loc_y = layout_spring_adj(am)
-  # draw_layout_adj(am, loc_x, loc_y, filename=filename, arrowlengthfrac=0)
-  draw_layout_adj(am, loc_x, loc_y, filename=filename)
-end
+# using GraphLayout
+# function drawGraph(filename, graph)
+#   # Output the graph
+#   am = Matrix(adjacency_matrix(graph))
+#   loc_x, loc_y = layout_spring_adj(am)
+#   # draw_layout_adj(am, loc_x, loc_y, filename=filename, arrowlengthfrac=0)
+#   draw_layout_adj(am, loc_x, loc_y, filename=filename)
+# end
 
-function liveness_optimisations(b)
-  ss = Vector{Vector{Int}}()
+function liveness_optimisations(b, funcs)
+  es = Vector{Vector{Int}}()
   lss = Vector{Vector{Vector{Int}}}()
-  liveness(b; skippedsets=ss, lines=lss);
-  b = useless_sets(b, ss, lss)
-  b = stack_locals(b, lss)
+  liveness(b; extra_sets=es, lines=lss);
+  # Remove sets first as they can clutter the stack.
+  b = extra_sets(b, es, lss, funcs)
+  b = stack_locals(b, lss, funcs)
   return nops(b)
 end
 
-
-# The lines array calculated whilst getting the liveness graph will come in
-# handy here. It will be in reverse order of appearance, so the final element of
-# each values array will be the set, and all the other elements will be gets.
-
-# Effectively the stack resets when entering a block, so locals will have to
-# be used to transfer values into a block. It's possible for a block to have
-# a single return value, meaning one time a value can be left on the stack
-# at the end of a block, code for block results in another pull.
-
-# Branches also clear the stack, so not possible to have values saved on the
-# stack during iterations of a loop.
-
-stack_change(i::Op) = op_stack_change[i.name]
-stack_change(i::Select) = -2
-stack_change(i::SetLocal) = i.tee ? 0 : -1
-stack_change(i::Union{Nop, Convert}) = 0
-stack_change(i::Union{Drop})  = -1
-# Once results are supported (they are in another pull) this could be 0 or 1.
-stack_change(i::Union{Block, Loop, If}) = 0
-stack_change(i::Union{Const, Local, Global}) = 1
-
-# Compute the stack change across a vector of instructions
-stack_change(i::Vector{Instruction}) = sum(map(stack_change, i) |> v -> isempty(v) ? Int[] : v)
-
-# Compute the stack change between 2 lines, currently only allowed when the
-# the level of both is the same.
-function stack_change(code, x, y)
-  x[1:end-1] == y[1:end-1] || error("Stack change across blocks currently unsupported.")
-  x[end] < y[end] || error("Can't check stack change in reverse.")
-  block = get_line(code, x[1:end-1])
-  block = block isa Vector ? block : block.body
-  return stack_change(block[x[end]+1:y[end]-1])
-end
-
-function stack_locals(b)
+function stack_locals(b, funcs)
   lines = Vector{Vector{Vector{Int}}}()
   liveness(b; lines=lines)
-  return nops(stack_locals(b, lines))
+  return nops(stack_locals(b, lines, funcs))
 end
 
-function stack_locals(b, lines)
-
-  # @show lines
-  # Once more is supported this filtering should stop being necessary.
-  # @show lines
+function stack_locals(b, lines, funcs)
   filter!(lines) do ls
     (length(ls) >= 2 && get_line(b, ls[end]) isa SetLocal) || return false
-    return all(e->e[1:end-1]==ls[1][1:end-1], ls)
+    ls[end][1:end-1]==ls[end-1][1:end-1] || return false
+    return all(e->!(e isa Branch), get_line(b, ls[end][1:end-1])[ls[end][end]:ls[end-1][end]])
   end
-  # @show lines
   len = typemax(Int)
   while length(lines) < len
     len = length(lines)
-    # @show len
     filter!(lines) do l
       get, set = l[end-1:end]
-      if stack_change(b, set, get) == 0
-        if length(l) == 2
-          set_line(b, set, Nop())
-          set_line(b, get, Nop())
-        else
-          set_line(b, set, Nop())
-          modify_line(x -> SetLocal(true, x.id), b, get)
+      if stack_change(b, set, get, funcs) == 0
+        set_line(b, set, Nop())
+        modify_line(b, get) do x
+          length(l) == 2 ? Nop() : SetLocal(true, x.id)
         end
         return false
       end
       return true
     end
   end
-  # @show lines, length(lines)
   return b
 end
 
-function useless_sets(b)
-  ss = Vector{Vector{Int}}()
+function extra_sets(b, funcs)
+  es = Vector{Vector{Int}}()
   lss = Vector{Vector{Vector{Int}}}()
-  liveness(b; skippedsets=ss, lines=lss);
-  return nops(useless_sets(b, ss, lss))
+  liveness(b; extra_sets=es, lines=lss);
+  return nops(extra_sets(b, es, lss, funcs))
 end
 
 # Removes sets that don't later use the value. If removing the set creates more
 # useless sets, removes those too without recomputing liveness.
-function useless_sets(b, ss, lss)
-  while length(ss) > 0
-    filter!(ss) do s
+function extra_sets(b, es, lss, funcs)
+  while length(es) > 0
+    filter!(es) do s
       modify_line(x -> x.tee ? Nop() : Drop(), b, s) == Drop()
     end
-    for s in ss
-      drop_removal(get_line(b, s[1:end-1]), s[end])
+    for s in es
+      drop_removal(get_line(b, s[1:end-1]), s[end], funcs)
     end
     map(ls -> filter!(l -> get_line(b, l) != Nop(), ls), lss)
-    ss = map(first, filter(ls -> length(ls) == 1 && get_line(b, ls[1]) isa SetLocal, lss))
+    es = map(first, filter(ls -> length(ls) == 1 && get_line(b, ls[1]) isa SetLocal, lss))
   end
   return b
 end
 
-# It's safe to remove a drop in most circumstances, since the stack being
-# dropped from is encapsulated to the current block it shouldn't be too
-# complicated either. However, if there is a branch between the drop and the
-# value to be dropped being added to the stack, it is unsafe to remove and
-# should be left in place.
+# It's safe to remove a drop in most circumstances. If there's a branch between
+# the drop and the value to be dropped being added to the stack it is unsafe.
+# The stack being dropped from is encapsulated to the current block.
 
-function drop_removal(b, i)
+function drop_removal(b, i, funcs)
   removals = Vector{Int}()
-  drop_removal(b, Ref(i), removals) || return false
-  # @show removals
+  drop_removal(b, Ref(i), removals, funcs) || return false
   for r in removals
-    b[r] = ##Nop()
+    b[r] =
       if b[r] isa SetLocal # Should only be tee_local but doesn't matter.
         SetLocal(false, b[r].id)
         # Nop()
       elseif b[r] isa Block || b[r] isa Loop || b[r] isa If
-        b[r]
-      #   # Check for result, remove if there is one by putting a drop before each
-      #   # branch and running again. (Might get annoying around conditional
-      #   # branches.) If there is no result (there should be) don't remove.
+        error()
+        # Check for result, remove if there is one by putting a drop before each
+        # branch and running again. (Might get annoying around conditional
+        # branches.) If there is no result (there should be) don't remove.
+      elseif b[r] isa Call
+        # Need to insert drop after, this will happen automatically when the
+        # drop removal is cancelled.
+
+        # The call could be removed if it's to a pure function. A pureness check
+        # could be as simple as checking the function only calls pure functions
+        # and doesn't alter memory/globals. Removing calls should probably only
+        # be done in the julia ir.
+        error()
       else
         Nop()
       end
@@ -382,96 +416,112 @@ function drop_removal(b, i)
   return true
 end
 
-function drop_removal(b::Vector{Instruction}, i::Ref{Int}, removals)
+function drop_removal(b::Vector{Instruction}, i::Ref{Int}, removals, funcs)
   removals != nothing && push!(removals, i.x)
-  args_left = num_args(b[i.x])
+  args_left = num_args(b[i.x], funcs)
   while args_left != 0
     op = b[i.x-=1]
-    op isa Branch && return false
-    res = num_res(op)
+    (op isa Branch || op isa Call) && return false
+    res = num_res(op, funcs)
     res > args_left && return false
     remove = res <= args_left && res != 0
 
-    # If it's a tee_local, it needs to become set_local, not be removed.
-    # Similar for blocks, they will lose their result.
-    rmResult = op isa SetLocal && op.tee || op isa Block && false
+    # If it's a tee_local, it needs to become set_local, not be removed. Similar
+    # for blocks, they will lose their result.
+    rmResult = op isa SetLocal && op.tee || op isa Block && false || op isa Call
 
     if remove
       args_left -= res
       if !rmResult
-        drop_removal(b, i, removals) || return false
+        drop_removal(b, i, removals, funcs) || return false
       else
         push!(removals, i.x)
+        drop_removal(b, i, nothing, funcs) || return false
       end
     elseif !remove
-      drop_removal(b, i, nothing) || return false
+      drop_removal(b, i, nothing, funcs) || return false
     end
   end
   return true
 end
 
-num_args(i::Op) = op_num_args[i.name]
-num_args(i::Select) = 3
-num_args(i::Union{Block, Loop, If, Nop, Const, Local}) = 0
-num_args(i::Union{Convert, Global, Drop, SetLocal}) = 1
+num_args(i::Op, _) = op_num_args_res[i.name][1]
+num_args(i::Select, _) = 3
+num_args(i::Union{Block, Loop, If, Nop, Const, Local}, _) = 0
+num_args(i::Union{Convert, Global, Drop, SetLocal}, _) = 1
+num_args(i::Func, _) = length(i.params)
+num_args(i::Call, funcs) = num_args(funcs[i.name], funcs)
 
-num_res(i::Op) = 1
-num_res(i::Select) = 1
-num_res(i::SetLocal) = i.tee ? 1 : 0
+num_res(i::Op, _) = op_num_args_res[i.name][2]
+num_res(i::Select, _) = 1
+num_res(i::SetLocal, _) = i.tee ? 1 : 0
 # Changes when results added
-num_res(i::Union{Nop, Block, Loop, If, Drop}) = 0
-num_res(i::Union{Const, Convert, Local, Global, SetLocal}) = 1
+num_res(i::Union{Nop, Block, Loop, If, Drop}, _) = 0
+num_res(i::Union{Const, Convert, Local, Global}, _) = 1
+num_res(i::Func, _) = length(i.returns)
+num_res(i::Call, funcs) = num_res(funcs[i.name], funcs)
 
-const op_stack_change =
+stack_change(i::Op, _) = op_num_args_res[i.name] |> t -> t[2] - t[1]
+stack_change(i::Call, funcs) = stack_change(funcs[i.name], funcs)
+stack_change(i, funcs) = num_res(i, funcs) - num_args(i, funcs)
+stack_change(i::Vector{Instruction}, funcs) = mapreduce(i -> stack_change(i, funcs), +, 0, i)
+
+# Compute the stack change between 2 lines, only possible when the the level of
+# both is the same, and no branches in between.
+function stack_change(code, x, y, funcs)
+  x[1:end-1] == y[1:end-1] || error("Stack change across blocks currently unsupported.")
+  x[end] < y[end] || error("Can't check stack change in reverse.")
+  block = get_line(code, x[1:end-1])
+  block = block isa Vector ? block : block.body
+  return stack_change(block[x[end]+1:y[end]-1], funcs)
+end
+
+const op_num_args_res =
   Dict(
-    :eqz	  =>  0,
-    :eq	    =>  -1,
-    :ne	    =>  -1,
-    :lt_s	  =>  -1,
-    :lt_u	  =>  -1,
-    :gt_s	  =>  -1,
-    :gt_u	  =>  -1,
-    :le_s	  =>  -1,
-    :le_u	  =>  -1,
-    :ge_s	  =>  -1,
-    :ge_u	  =>  -1,
-    :clz    =>  0,
-    :ctz    =>  0,
-    :popcnt =>  0,
-    :add    =>  -1,
-    :sub    =>  -1,
-    :mul    =>  -1,
-    :div_s  =>  -1,
-    :div_u  =>  -1,
-    :rem_s  =>  -1,
-    :rem_u  =>  -1,
-    :and    =>  -1,
-    :or     =>  -1,
-    :xor    =>  -1,
-    :shl    =>  -1,
-    :shr_s  =>  -1,
-    :shr_u  =>  -1,
+    :eqz	  =>  (1, 1),
+    :eq	    =>  (2, 1),
+    :ne	    =>  (2, 1),
+    :lt_s	  =>  (2, 1),
+    :lt_u	  =>  (2, 1),
+    :gt_s	  =>  (2, 1),
+    :gt_u	  =>  (2, 1),
+    :le_s	  =>  (2, 1),
+    :le_u	  =>  (2, 1),
+    :ge_s	  =>  (2, 1),
+    :ge_u	  =>  (2, 1),
+    :clz    =>  (1, 1),
+    :ctz    =>  (1, 1),
+    :popcnt =>  (1, 1),
+    :add    =>  (2, 1),
+    :sub    =>  (2, 1),
+    :mul    =>  (2, 1),
+    :div_s  =>  (2, 1),
+    :div_u  =>  (2, 1),
+    :rem_s  =>  (2, 1),
+    :rem_u  =>  (2, 1),
+    :and    =>  (2, 1),
+    :or     =>  (2, 1),
+    :xor    =>  (2, 1),
+    :shl    =>  (2, 1),
+    :shr_s  =>  (2, 1),
+    :shr_u  =>  (2, 1),
     # Check these two.
-    :rotl   =>  -1,
-    :rotr   =>  -1,
+    :rotl   =>  (2, 1),
+    :rotr   =>  (2, 1),
 
-    :lt       =>  -1,
-    :gt       =>  -1,
-    :le       =>  -1,
-    :ge       =>  -1,
-    :abs      =>  0,
-    :neg      =>  0,
-    :ceil     =>  0,
-    :floor    =>  0,
-    :trunc    =>  0,
-    :nearest  =>  0,
-    :sqrt     =>  0,
-    :div      =>  -1,
-    :min      =>  -1,
-    :max      =>  -1,
-    :copysign =>  -1
-)
-
-# Dict assumes all the operations in op_stack_change return 1 value, if that
-# stops being true do this in a better way.
-const op_num_args = Dict(n => -c + 1 for (n, c) in op_stack_change)
+    :lt       =>  (2, 1),
+    :gt       =>  (2, 1),
+    :le       =>  (2, 1),
+    :ge       =>  (2, 1),
+    :abs      =>  (1, 1),
+    :neg      =>  (1, 1),
+    :ceil     =>  (1, 1),
+    :floor    =>  (1, 1),
+    :trunc    =>  (1, 1),
+    :nearest  =>  (1, 1),
+    :sqrt     =>  (1, 1),
+    :div      =>  (2, 1),
+    :min      =>  (2, 1),
+    :max      =>  (2, 1),
+    :copysign =>  (2, 1)
+  )
