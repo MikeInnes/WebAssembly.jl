@@ -163,14 +163,13 @@ end
 function liveness_(x::Branch, code, i, alive, branch, branches, perm_alive, rig, lines, types, values_of_type; ks...)
   br = branches[end-x.level]
   perm_alive = merge(perm_alive, Dict(setdiff(alive, br[1])))
-  @show perm_alive
   x.cond ? merge!(alive, copy(br[1])) : merge!(empty!(alive), copy(br[1]), perm_alive)
   if !br[2] # If not branching to a loop.
     @show perm_alive
     liveness(code[1:i-1], alive, branch, branches, perm_alive; rig=rig, lines=lines, types=types, values_of_type=values_of_type, ks...)
   else
     # First pass of loop to get alive set after loop.
-    a_f = liveness(code[1:i-1], copy(alive), branch, branches, perm_alive; rig=Ref{Int}(rig isa Ref ? rig.x : nv(rig)))
+    a_f = liveness(code[1:i-1], copy(alive), branch, branches, merge(perm_alive, alive); rig=Ref{Int}(rig isa Ref ? rig.x : nv(rig)))
 
     a_diff = Dict(a => rig isa Ref ? rig.x += 1 : (add_vertex!(rig); nv(rig)) for (a, _) in setdiff(a_f, alive))
     merge!(alive, a_diff)
