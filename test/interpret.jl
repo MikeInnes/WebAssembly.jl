@@ -140,7 +140,7 @@ root = "test/wast/functions/"
 for test in tests
   f = test[2]
   f = Func(f.name, f.params, f.returns, f.locals, WebAssembly.optimise(f.body))
-  @test rand_test_wasm(test[1], f)
+  @test rand_test_wasm(test[1], WebAssembly.allocate_registers(f))
 end
 
 # Sort of test module parsing
