@@ -80,7 +80,7 @@ function rmblocks(code)
   end
 end
 
-optimise(b) = b |> deadcode |> makeifs |> rmblocks
+optimise(b) = b |> deadcode |> makeifs |> rmblocks |> liveness_optimisations
 
 using LightGraphs
 
@@ -208,7 +208,10 @@ function allocate_registers(func::Func)
   skippedsets = Vector{Vector{Int}}()
   alive = liveness(func; rig=rig, lines=lines, skippedsets=skippedsets)
 
-  coloring = rig |> greedy_color
+  # @show fieldnames(rig)
+  # @show field
+  # @show
+  coloring = rig != SimpleGraph() ? rig |> greedy_color : LightGraphs.coloring(0, Vector{Int}())
 
   length(alive) == length(func.params) || println("Not all parameters are used.")
 
@@ -245,6 +248,16 @@ function drawGraph(filename, graph)
   # draw_layout_adj(am, loc_x, loc_y, filename=filename, arrowlengthfrac=0)
   draw_layout_adj(am, loc_x, loc_y, filename=filename)
 end
+
+function liveness_optimisations(b)
+  ss = Vector{Vector{Int}}()
+  lss = Vector{Vector{Vector{Int}}}()
+  liveness(b; skippedsets=ss, lines=lss);
+  b = useless_sets(b, ss, lss)
+  b = stack_locals(b, lss)
+  return nops(b)
+end
+
 
 # The lines array calculated whilst getting the liveness graph will come in
 # handy here. It will be in reverse order of appearance, so the final element of
@@ -290,16 +303,16 @@ function stack_locals(b, lines)
 
   # @show lines
   # Once more is supported this filtering should stop being necessary.
-  @show lines
+  # @show lines
   filter!(lines) do ls
     (length(ls) >= 2 && get_line(b, ls[end]) isa SetLocal) || return false
     return all(e->e[1:end-1]==ls[1][1:end-1], ls)
   end
-  @show lines
+  # @show lines
   len = typemax(Int)
   while length(lines) < len
     len = length(lines)
-    @show len
+    # @show len
     filter!(lines) do l
       get, set = l[end-1:end]
       if stack_change(b, set, get) == 0
@@ -319,6 +332,95 @@ function stack_locals(b, lines)
   return b
 end
 
+function useless_sets(b)
+  ss = Vector{Vector{Int}}()
+  lss = Vector{Vector{Vector{Int}}}()
+  liveness(b; skippedsets=ss, lines=lss);
+  return nops(useless_sets(b, ss, lss))
+end
+
+# Removes sets that don't later use the value. If removing the set creates more
+# useless sets, removes those too without recomputing liveness.
+function useless_sets(b, ss, lss)
+  while length(ss) > 0
+    filter!(ss) do s
+      modify_line(x -> x.tee ? Nop() : Drop(), b, s) == Drop()
+    end
+    for s in ss
+      drop_removal(get_line(b, s[1:end-1]), s[end])
+    end
+    map(ls -> filter!(l -> get_line(b, l) != Nop(), ls), lss)
+    ss = map(first, filter(ls -> length(ls) == 1 && get_line(b, ls[1]) isa SetLocal, lss))
+  end
+  return b
+end
+
+# It's safe to remove a drop in most circumstances, since the stack being
+# dropped from is encapsulated to the current block it shouldn't be too
+# complicated either. However, if there is a branch between the drop and the
+# value to be dropped being added to the stack, it is unsafe to remove and
+# should be left in place.
+
+function drop_removal(b, i)
+  removals = Vector{Int}()
+  drop_removal(b, Ref(i), removals) || return false
+  # @show removals
+  for r in removals
+    b[r] = ##Nop()
+      if b[r] isa SetLocal # Should only be tee_local but doesn't matter.
+        SetLocal(false, b[r].id)
+        # Nop()
+      elseif b[r] isa Block || b[r] isa Loop || b[r] isa If
+        b[r]
+      #   # Check for result, remove if there is one by putting a drop before each
+      #   # branch and running again. (Might get annoying around conditional
+      #   # branches.) If there is no result (there should be) don't remove.
+      else
+        Nop()
+      end
+  end
+  return true
+end
+
+function drop_removal(b::Vector{Instruction}, i::Ref{Int}, removals)
+  removals != nothing && push!(removals, i.x)
+  args_left = num_args(b[i.x])
+  while args_left != 0
+    op = b[i.x-=1]
+    op isa Branch && return false
+    res = num_res(op)
+    res > args_left && return false
+    remove = res <= args_left && res != 0
+
+    # If it's a tee_local, it needs to become set_local, not be removed.
+    # Similar for blocks, they will lose their result.
+    rmResult = op isa SetLocal && op.tee || op isa Block && false
+
+    if remove
+      args_left -= res
+      if !rmResult
+        drop_removal(b, i, removals) || return false
+      else
+        push!(removals, i.x)
+      end
+    elseif !remove
+      drop_removal(b, i, nothing) || return false
+    end
+  end
+  return true
+end
+
+num_args(i::Op) = op_num_args[i.name]
+num_args(i::Select) = 3
+num_args(i::Union{Block, Loop, If, Nop, Const, Local}) = 0
+num_args(i::Union{Convert, Global, Drop, SetLocal}) = 1
+
+num_res(i::Op) = 1
+num_res(i::Select) = 1
+num_res(i::SetLocal) = i.tee ? 1 : 0
+# Changes when results added
+num_res(i::Union{Nop, Block, Loop, If, Drop}) = 0
+num_res(i::Union{Const, Convert, Local, Global, SetLocal}) = 1
 
 const op_stack_change =
   Dict(
@@ -369,3 +471,7 @@ const op_stack_change =
     :max      =>  -1,
     :copysign =>  -1
 )
+
+# Dict assumes all the operations in op_stack_change return 1 value, if that
+# stops being true do this in a better way.
+const op_num_args = Dict(n => -c + 1 for (n, c) in op_stack_change)
