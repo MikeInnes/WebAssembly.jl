@@ -80,7 +80,7 @@ function rmblocks(code)
   end
 end
 
-optimise(b) = b |> deadcode |> makeifs |> rmblocks
+optimise(b) = b |> deadcode |> makeifs |> rmblocks |> liveness_optimisations
 
 using LightGraphs
 
@@ -208,7 +208,10 @@ function allocate_registers(func::Func)
   skippedsets = Vector{Vector{Int}}()
   alive = liveness(func; rig=rig, lines=lines, skippedsets=skippedsets)
 
-  coloring = rig |> greedy_color
+  # @show fieldnames(rig)
+  # @show field
+  # @show
+  coloring = rig != SimpleGraph() ? rig |> greedy_color : LightGraphs.coloring(0, Vector{Int}())
 
   length(alive) == length(func.params) || println("Not all parameters are used.")
 
@@ -245,6 +248,16 @@ function drawGraph(filename, graph)
   # draw_layout_adj(am, loc_x, loc_y, filename=filename, arrowlengthfrac=0)
   draw_layout_adj(am, loc_x, loc_y, filename=filename)
 end
+
+function liveness_optimisations(b)
+  ss = Vector{Vector{Int}}()
+  lss = Vector{Vector{Vector{Int}}}()
+  liveness(b; skippedsets=ss, lines=lss);
+  b = useless_sets(b, ss, lss)
+  b = stack_locals(b, lss)
+  return nops(b)
+end
+
 
 # The lines array calculated whilst getting the liveness graph will come in
 # handy here. It will be in reverse order of appearance, so the final element of
@@ -290,16 +303,16 @@ function stack_locals(b, lines)
 
   # @show lines
   # Once more is supported this filtering should stop being necessary.
-  @show lines
+  # @show lines
   filter!(lines) do ls
     (length(ls) >= 2 && get_line(b, ls[end]) isa SetLocal) || return false
     return all(e->e[1:end-1]==ls[1][1:end-1], ls)
   end
-  @show lines
+  # @show lines
   len = typemax(Int)
   while length(lines) < len
     len = length(lines)
-    @show len
+    # @show len
     filter!(lines) do l
       get, set = l[end-1:end]
       if stack_change(b, set, get) == 0
@@ -333,11 +346,9 @@ function useless_sets(b, ss, lss)
     filter!(ss) do s
       modify_line(x -> x.tee ? Nop() : Drop(), b, s) == Drop()
     end
-
     for s in ss
       drop_removal(get_line(b, s[1:end-1]), s[end])
     end
-
     map(ls -> filter!(l -> get_line(b, l) != Nop(), ls), lss)
     ss = map(first, filter(ls -> length(ls) == 1 && get_line(b, ls[1]) isa SetLocal, lss))
   end
