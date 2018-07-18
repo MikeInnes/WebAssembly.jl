@@ -80,7 +80,20 @@ function rmblocks(code)
   end
 end
 
-optimise(b::Block) = b |> deadcode |> makeifs |> rmblocks |> liveness_optimisations
+optimise(b::Block) = b |> deadcode |> makeifs |> rmblocks
+
+# Funcs is a mapping from internalname to function defintion.
+function optimise(m::Module, funcs=nothing)
+  # println("not even being called")
+  funcs = funcs == nothing ? Dict(f.name => f for f in m.funcs) : funcs
+  # @show funcs
+  map!(m.funcs, m.funcs) do f
+    body = optimise(f.body) |> b -> liveness_optimisations(b, funcs)
+    f = Func(f.name, f.params, f.returns, f.locals, body)
+    allocate_registers(f)
+  end
+  return m
+end
 
 
 using LightGraphs
@@ -248,22 +261,23 @@ function drawGraph(filename, graph)
   draw_layout_adj(am, loc_x, loc_y, filename=filename)
 end
 
-function liveness_optimisations(b)
+function liveness_optimisations(b, funcs)
   es = Vector{Vector{Int}}()
   lss = Vector{Vector{Vector{Int}}}()
   liveness(b; extra_sets=es, lines=lss);
-  b = extra_sets(b, es, lss)
-  b = stack_locals(b, lss)
+  # Remove sets first as they can clutter the stack.
+  b = extra_sets(b, es, lss, funcs)
+  b = stack_locals(b, lss, funcs)
   return nops(b)
 end
 
-function stack_locals(b)
+function stack_locals(b, funcs)
   lines = Vector{Vector{Vector{Int}}}()
   liveness(b; lines=lines)
   return nops(stack_locals(b, lines))
 end
 
-function stack_locals(b, lines)
+function stack_locals(b, lines, funcs)
   filter!(lines) do ls
     (length(ls) >= 2 && get_line(b, ls[end]) isa SetLocal) || return false
     return all(e->e[1:end-1]==ls[1][1:end-1], ls)
@@ -273,7 +287,7 @@ function stack_locals(b, lines)
     len = length(lines)
     filter!(lines) do l
       get, set = l[end-1:end]
-      if stack_change(b, set, get) == 0
+      if stack_change(b, set, get, funcs) == 0
         set_line(b, set, Nop())
         modify_line(b, get) do x
           length(l) == 2 ? Nop() : SetLocal(true, x.id)
@@ -295,13 +309,13 @@ end
 
 # Removes sets that don't later use the value. If removing the set creates more
 # useless sets, removes those too without recomputing liveness.
-function extra_sets(b, es, lss)
+function extra_sets(b, es, lss, funcs)
   while length(es) > 0
     filter!(es) do s
       modify_line(x -> x.tee ? Nop() : Drop(), b, s) == Drop()
     end
     for s in es
-      drop_removal(get_line(b, s[1:end-1]), s[end])
+      drop_removal(get_line(b, s[1:end-1]), s[end], funcs)
     end
     map(ls -> filter!(l -> get_line(b, l) != Nop(), ls), lss)
     es = map(first, filter(ls -> length(ls) == 1 && get_line(b, ls[1]) isa SetLocal, lss))
@@ -315,9 +329,9 @@ end
 # value to be dropped being added to the stack, it is unsafe to remove and
 # should be left in place.
 
-function drop_removal(b, i)
+function drop_removal(b, i, funcs)
   removals = Vector{Int}()
-  drop_removal(b, Ref(i), removals) || return false
+  drop_removal(b, Ref(i), removals, funcs) || return false
   # @show removals
   for r in removals
     b[r] = ##Nop()
@@ -325,10 +339,19 @@ function drop_removal(b, i)
         SetLocal(false, b[r].id)
         # Nop()
       elseif b[r] isa Block || b[r] isa Loop || b[r] isa If
-        b[r]
-      #   # Check for result, remove if there is one by putting a drop before each
-      #   # branch and running again. (Might get annoying around conditional
-      #   # branches.) If there is no result (there should be) don't remove.
+        error()
+        # Check for result, remove if there is one by putting a drop before each
+        # branch and running again. (Might get annoying around conditional
+        # branches.) If there is no result (there should be) don't remove.
+      elseif b[r] isa Call
+        # Need to insert drop after, this will happen automatically when the
+        # drop removal is cancelled.
+
+        # The call could be removed if it's to a pure function. A pureness check
+        # could be as simple as checking the function only calls pure functions
+        # and doesn't alter memory/globals. Removing calls should probably only
+        # be done in the julia ir.
+        error()
       else
         Nop()
       end
@@ -336,58 +359,63 @@ function drop_removal(b, i)
   return true
 end
 
-function drop_removal(b::Vector{Instruction}, i::Ref{Int}, removals)
+function drop_removal(b::Vector{Instruction}, i::Ref{Int}, removals, funcs)
   removals != nothing && push!(removals, i.x)
-  args_left = num_args(b[i.x])
+  args_left = num_args(b[i.x], funcs)
   while args_left != 0
     op = b[i.x-=1]
-    op isa Branch && return false
-    res = num_res(op)
+    (op isa Branch || op isa Call) && return false
+    res = num_res(op, funcs)
     res > args_left && return false
     remove = res <= args_left && res != 0
 
-    # If it's a tee_local, it needs to become set_local, not be removed.
-    # Similar for blocks, they will lose their result.
-    rmResult = op isa SetLocal && op.tee || op isa Block && false
+    # If it's a tee_local, it needs to become set_local, not be removed. Similar
+    # for blocks, they will lose their result.
+    rmResult = op isa SetLocal && op.tee || op isa Block && false || op isa Call
 
     if remove
       args_left -= res
       if !rmResult
-        drop_removal(b, i, removals) || return false
+        drop_removal(b, i, removals, funcs) || return false
       else
         push!(removals, i.x)
       end
     elseif !remove
-      drop_removal(b, i, nothing) || return false
+      drop_removal(b, i, nothing, funcs) || return false
     end
   end
   return true
 end
 
-num_args(i::Op) = op_num_args_res[i.name][1]
-num_args(i::Select) = 3
-num_args(i::Union{Block, Loop, If, Nop, Const, Local}) = 0
-num_args(i::Union{Convert, Global, Drop, SetLocal}) = 1
+num_args(i::Op, _) = op_num_args_res[i.name][1]
+num_args(i::Select, _) = 3
+num_args(i::Union{Block, Loop, If, Nop, Const, Local}, _) = 0
+num_args(i::Union{Convert, Global, Drop, SetLocal}, _) = 1
+num_args(i::Func, _) = length(i.params)
+num_args(i::Call, funcs) = num_args(funcs[i.name], funcs)
 
-num_res(i::Op) = op_num_args_res[i.name][2]
-num_res(i::Select) = 1
-num_res(i::SetLocal) = i.tee ? 1 : 0
+num_res(i::Op, _) = op_num_args_res[i.name][2]
+num_res(i::Select, _) = 1
+num_res(i::SetLocal, _) = i.tee ? 1 : 0
 # Changes when results added
-num_res(i::Union{Nop, Block, Loop, If, Drop}) = 0
-num_res(i::Union{Const, Convert, Local, Global}) = 1
+num_res(i::Union{Nop, Block, Loop, If, Drop}, _) = 0
+num_res(i::Union{Const, Convert, Local, Global}, _) = 1
+num_res(i::Func, _) = length(i.returns)
+num_res(i::Call, funcs) = num_res(funcs[i.name], funcs)
 
-stack_change(i::Op) = op_num_args_res[i.name] |> t -> t[2] - t[1]
-stack_change(i) = num_res(i) - num_args(i)
-stack_change(i::Vector{Instruction}) = mapreduce(stack_change, +, 0, i)
+stack_change(i::Op, _) = op_num_args_res[i.name] |> t -> t[2] - t[1]
+stack_change(i::Call, funcs) = stack_change(funcs[i.name], funcs)
+stack_change(i, funcs) = num_res(i, funcs) - num_args(i, funcs)
+stack_change(i::Vector{Instruction}, funcs) = mapreduce(i -> stack_change(i, funcs), +, 0, i)
 
 # Compute the stack change between 2 lines, only possible when the the level of
 # both is the same, and no branches in between.
-function stack_change(code, x, y)
+function stack_change(code, x, y, funcs)
   x[1:end-1] == y[1:end-1] || error("Stack change across blocks currently unsupported.")
   x[end] < y[end] || error("Can't check stack change in reverse.")
   block = get_line(code, x[1:end-1])
   block = block isa Vector ? block : block.body
-  return stack_change(block[x[end]+1:y[end]-1])
+  return stack_change(block[x[end]+1:y[end]-1], funcs)
 end
 
 const op_num_args_res =
