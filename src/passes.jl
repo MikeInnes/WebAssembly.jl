@@ -321,18 +321,27 @@ end
 
 function useless_sets(b)
   ss = Vector{Vector{Int}}()
-  # lines = Vector{Vector{Vector{Int}}}()
-  # @show b
-  while (empty!(ss); liveness(b; skippedsets=ss); length(ss) != 0)
-    @show ss
+  lss = Vector{Vector{Vector{Int}}}()
+  liveness(b; skippedsets=ss, lines=lss);
+  return nops(useless_sets(b, ss, lss))
+end
+
+# Removes sets that don't later use the value. If removing the set creates more
+# useless sets, removes those too without recomputing liveness.
+function useless_sets(b, ss, lss)
+  while length(ss) > 0
     filter!(ss) do s
       modify_line(x -> x.tee ? Nop() : Drop(), b, s) == Drop()
     end
+
     for s in ss
-      drop_removal(get_line(b.body, s[1:end-1]), s[end])
+      drop_removal(get_line(b, s[1:end-1]), s[end])
     end
+
+    map(ls -> filter!(l -> get_line(b, l) != Nop(), ls), lss)
+    ss = map(first, filter(ls -> length(ls) == 1 && get_line(b, ls[1]) isa SetLocal, lss))
   end
-  return nops(b)
+  return b
 end
 
 # It's safe to remove a drop in most circumstances, since the stack being
@@ -346,10 +355,8 @@ function drop_removal(b, i)
   drop_removal(b, Ref(i), removals) || return false
   # @show removals
   for r in removals
-    @show b[r]
     b[r] = ##Nop()
       if b[r] isa SetLocal # Should only be tee_local but doesn't matter.
-        println("Not removing for reasons <--------------")
         SetLocal(false, b[r].id)
         # Nop()
       elseif b[r] isa Block || b[r] isa Loop || b[r] isa If
@@ -360,37 +367,15 @@ function drop_removal(b, i)
       else
         Nop()
       end
-    @show b[r]
   end
   return true
 end
 
-
-# Also ideally blocks should be removed in reverse order because there's a
-# chance removing it will remove the drop that came before it.
-# function drop_removal(b::Vector{Instruction}, i::Ref{Int}, removals=nothing)
 function drop_removal(b::Vector{Instruction}, i::Ref{Int}, removals)
-  # j = Ref{Int}(i - 1)
-  # i_ = i.x
-  # @show i
   removals != nothing && push!(removals, i.x)
-  # for k in 1:num_args(b[i])
-  #   change = 0
-  #   @show "back again"
-  #   while change <= 0
-  #     change += stack_change(b[j -= 1])
-  #     b[j] isa Branch && return []
-  #   end
-  #   @show "here"
-  #   drop_removal(b, j, removals)
-  # end
-  # println("talkiwjhl")
   args_left = num_args(b[i.x])
-  @show args_left
   while args_left != 0
-    @show removals
     op = b[i.x-=1]
-    @show op, num_res(op)
     op isa Branch && return false
     res = num_res(op)
     res > args_left && return false
@@ -399,32 +384,17 @@ function drop_removal(b::Vector{Instruction}, i::Ref{Int}, removals)
     # If it's a tee_local, it needs to become set_local, not be removed.
     # Similar for blocks, they will lose their result.
     rmResult = op isa SetLocal && op.tee || op isa Block && false
-    # args_left += args
-    @show args_left
 
     if remove
       args_left -= res
       if !rmResult
-        # @show "what"
         drop_removal(b, i, removals) || return false
-        @show i
       else
-        # Will be clear when the result needs to be held
         push!(removals, i.x)
       end
     elseif !remove
       drop_removal(b, i, nothing) || return false
     end
-
-
-    # change = 0
-    # @show "back again"
-    # while change <= 0
-    #   change += stack_change(b[j -= 1])
-    #   b[j] isa Branch && return []
-    # end
-    # @show "here"
-    # drop_removal(b, j, removals)
   end
   return true
 end
