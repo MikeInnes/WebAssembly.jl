@@ -216,7 +216,7 @@ expected_func = Func(Symbol("addTwo"), [i32, i32], [i32], [], Block([Local(0), L
 
 @test m2.exports == [Export(:this, Symbol("#this_Int64"), :func), Export(:pow, Symbol("#pow_Int64_Int64"), :func), Export(:fib, Symbol("#fib_Int64"), :func)]
 
-map!(WebAssembly.optimise, m2.funcs)
+# map!(WebAssembly.optimise, m2.funcs)
 @test rand_test_module([fib, this, pow], m2)
 
 end
