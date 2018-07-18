@@ -84,9 +84,7 @@ optimise(b::Block) = b |> deadcode |> makeifs |> rmblocks
 
 # Funcs is a mapping from internalname to function defintion.
 function optimise(m::Module, funcs=nothing)
-  # println("not even being called")
   funcs = funcs == nothing ? Dict(f.name => f for f in m.funcs) : funcs
-  # @show funcs
   map!(m.funcs, m.funcs) do f
     body = optimise(f.body) |> b -> liveness_optimisations(b, funcs)
     f = Func(f.name, f.params, f.returns, f.locals, body)
@@ -323,18 +321,15 @@ function extra_sets(b, es, lss, funcs)
   return b
 end
 
-# It's safe to remove a drop in most circumstances, since the stack being
-# dropped from is encapsulated to the current block it shouldn't be too
-# complicated either. However, if there is a branch between the drop and the
-# value to be dropped being added to the stack, it is unsafe to remove and
-# should be left in place.
+# It's safe to remove a drop in most circumstances. If there's a branch between
+# the drop and the value to be dropped being added to the stack it is unsafe.
+# The stack being dropped from is encapsulated to the current block.
 
 function drop_removal(b, i, funcs)
   removals = Vector{Int}()
   drop_removal(b, Ref(i), removals, funcs) || return false
-  # @show removals
   for r in removals
-    b[r] = ##Nop()
+    b[r] =
       if b[r] isa SetLocal # Should only be tee_local but doesn't matter.
         SetLocal(false, b[r].id)
         # Nop()
@@ -379,6 +374,7 @@ function drop_removal(b::Vector{Instruction}, i::Ref{Int}, removals, funcs)
         drop_removal(b, i, removals, funcs) || return false
       else
         push!(removals, i.x)
+        drop_removal(b, i, nothing, funcs) || return false
       end
     elseif !remove
       drop_removal(b, i, nothing, funcs) || return false
