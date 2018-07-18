@@ -1,7 +1,8 @@
 function interpretwasm(f::Func, fs, args)
-  params = [convert(jltype(typ), arg) for (typ, arg) in zip(f.params, args)]
-  locals = [convert(jltype(typ), 0) for typ in f.locals]
-  ms = vcat(params, locals)
+  # params = [convert(jltype(typ), arg) for (typ, arg) in zip(f.params, args)]
+  params = [reinterpret(jltype(typ), arg) for (typ, arg) in zip(f.params, args)]
+  locals = [zero(jltype(typ)) for typ in f.locals]
+  ms = Vector{Integer}(vcat(params, locals))
 
   apInstr(f.body, ms, 0, fs)
 
@@ -9,7 +10,7 @@ function interpretwasm(f::Func, fs, args)
 
   # Check to make sure the return types are all correct
   for (rtyp, r) in zip(f.returns, returns)
-    if jltype(rtyp) != typeof(r)
+    if rtyp != WType(typeof(r))
       error("ERROR: Return type mismatch")
     end
   end
@@ -49,7 +50,8 @@ function popn!(xs, n)
   return splice!(xs, len - n + 1:len)
 end
 
-apN(n, f) = ms -> push!(ms, f(popn!(ms, n)...))
+# apN(n, f) = (ms, t) -> push!(ms, f((popn!(ms, n) |> m -> ((all(m -> (@show WType(typeof(@show m)))==(@show t), m) || error()); m))...))
+apN(n, f) = (ms, t) -> push!(ms, f((popn!(ms, n) |> m -> ((all(m -> WType(typeof(m))==t, m) || error()); m))...))
 
 # Functions to fix true -> 1 and false -> 0, but that's the case anyway
 # function MComp(comparator)
@@ -64,11 +66,13 @@ unsign(x::Int64) = reinterpret(UInt64, x)
 unsign(x::Int32) = reinterpret(UInt32, x)
 resign(x::UInt64) = reinterpret(Int64, x)
 resign(x::UInt32) = reinterpret(Int32, x)
+unsign(x::Vector) = map!(unsign, x, x)
+resign(x::Vector) = map!(resign, x, x)
 
 unsign(x) = x
 resign(x) = x
 
-apN_U(n, f) = ms -> push!(ms, resign(f(unsign(popn!(ms, n))...)))
+apN_U(n, f) = (ms, t) -> push!(ms, resign(f(unsign(popn!(ms, n) |> m -> ((all(m -> WType(typeof(m))==t, m) || error()); m))...)))
 
 operations =
   Dict(:lt_s   => apN(2, <)
@@ -102,7 +106,7 @@ apInstr(i::Const,       ms) = push!(ms,value(i));
 apInstr(i::Unreachable, ms) = error("Unreachable")
 apInstr(i::Drop, ms)        = pop!(ms)
 apInstr(i::Convert,     ms) = push!(ms, convert(jltype(i.to), float(pop!(ms))))
-apInstr(i::Op,          ms) = operations[i.name](ms)
+apInstr(i::Op,          ms) = operations[i.name](ms, i.typ)
 
 # apInstr(i::SetLocal,    ms) = i.id + 1 == length(ms) ? ms[i.id + 1] = i.tee ? last(ms) : pop!(ms) : ms
 apInstr(i::SetLocal,    ms) = ms[i.id + 1] = i.tee ? last(ms) : pop!(ms)
