@@ -86,15 +86,15 @@ optimise(b::Block) = b |> deadcode |> makeifs |> rmblocks
 function optimise(m::Module, funcs=nothing)
   funcs = funcs == nothing ? Dict(f.name => f for f in m.funcs) : funcs
   map!(m.funcs, m.funcs) do f
-    @show f
     body = optimise(f.body)
     # body = optimise(f.body) |> b -> stack_locals(b, funcs)#b -> liveness_optimisations(b, funcs)
-    # body = optimise(f.body) |> b -> liveness_optimisations(b, funcs)
+    body = optimise(f.body) #|> b -> liveness_optimisations(b, funcs)
     # body = body |> b -> extra_sets(b, funcs)#b -> liveness_optimisations(b, funcs)
     f = Func(f.name, f.params, f.returns, f.locals, body)
+    @show f
     # println("new call <-------------------")
     # @show f
-    @show allocate_registers(f)
+    # @show allocate_registers(f)
   end
   return m
 end
@@ -164,7 +164,7 @@ function liveness_(x::Branch, code, i, alive, branch, branches, perm_alive, rig,
   br = branches[end-x.level]
   perm_alive = merge(perm_alive, Dict(setdiff(alive, br[1])))
   @show perm_alive
-  x.cond ? merge!(alive, copy(br[1]), perm_alive) : merge!(empty!(alive), copy(br[1]), perm_alive)
+  x.cond ? merge!(alive, copy(br[1])) : merge!(empty!(alive), copy(br[1]), perm_alive)
   if !br[2] # If not branching to a loop.
     @show perm_alive
     liveness(code[1:i-1], alive, branch, branches, perm_alive; rig=rig, lines=lines, types=types, values_of_type=values_of_type, ks...)
@@ -262,7 +262,7 @@ function allocate_registers(func::Func)
   alive = liveness(func; rig=rig, lines=lines, extra_sets=extra_sets, types=types, values_of_type=values_of_type)
 
   # Fixup for when not all parameters are used.
-  if length(alive) != length(func.params)
+  if !all(i -> haskey(alive, i-1), eachindex(func.params))
     for i in eachindex(func.params)
       if !haskey(alive, i-1)
         add_vertex!(rig)
@@ -291,7 +291,7 @@ function allocate_registers(func::Func)
   @show coloring
 
   rs = Set(0:coloring.num_colors-1)
-  c_to_r = Dict(coloring.colors[v] => r for (r, v) in alive)
+  c_to_r = Dict(coloring.colors[alive[i]] => i for i in 0:length(func.params)-1)
   # c_to_r = [coloring.colors[alive[i]] for i in 0:length(alive)-1]
   @show c_to_r
   length(c_to_r) == length(func.params) || error()
