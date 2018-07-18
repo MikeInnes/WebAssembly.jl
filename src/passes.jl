@@ -80,7 +80,8 @@ function rmblocks(code)
   end
 end
 
-optimise(b) = b |> deadcode |> makeifs |> rmblocks |> liveness_optimisations
+optimise(b::Block) = b |> deadcode |> makeifs |> rmblocks |> liveness_optimisations
+
 
 using LightGraphs
 
@@ -196,7 +197,8 @@ modify_line(f, code, branch) = apply_line(code, copy(branch), f)
 apply_line(i::Func, bs, f) = apply_line(i.body.body, bs, f)
 apply_line(i::Union{Block, Loop}, bs, f) = apply_line(i.body, bs, f)
 # apply_line(i::If, bs, f) = bs |> shift! |> b -> apply_line(getfield(i, b), bs, f)
-apply_line(i::If, bs, f) = bs |> shift! |> b -> getfield(i, b) |> i -> isempty(bs) ? i : apply_line(i, bs, f)
+# apply_line(i::If, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> getfield(i, b) |> i -> isempty(bs) ? i : apply_line(i, bs, f)
+apply_line(i::If, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> apply_line(getfield(i, b), bs, f)
 
 # apply_line(i::Vector, bs, f) = (@show bs) |> shift! |> b -> isempty(bs) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
 apply_line(i::Vector, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> isempty(bs) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
@@ -208,9 +210,6 @@ function allocate_registers(func::Func)
   extra_sets = Vector{Vector{Int}}()
   alive = liveness(func; rig=rig, lines=lines, extra_sets=extra_sets)
 
-  # @show fieldnames(rig)
-  # @show field
-  # @show
   coloring = rig != SimpleGraph() ? rig |> greedy_color : LightGraphs.coloring(0, Vector{Int}())
 
   length(alive) == length(func.params) || println("Not all parameters are used.")
@@ -258,41 +257,6 @@ function liveness_optimisations(b)
   return nops(b)
 end
 
-
-# The lines array calculated whilst getting the liveness graph will come in
-# handy here. It will be in reverse order of appearance, so the final element of
-# each values array will be the set, and all the other elements will be gets.
-
-# Effectively the stack resets when entering a block, so locals will have to
-# be used to transfer values into a block. It's possible for a block to have
-# a single return value, meaning one time a value can be left on the stack
-# at the end of a block, code for block results in another pull.
-
-# Branches also clear the stack, so not possible to have values saved on the
-# stack during iterations of a loop.
-
-stack_change(i::Op) = op_stack_change[i.name]
-stack_change(i::Select) = -2
-stack_change(i::SetLocal) = i.tee ? 0 : -1
-stack_change(i::Union{Nop, Convert}) = 0
-stack_change(i::Union{Drop})  = -1
-# Once results are supported (they are in another pull) this could be 0 or 1.
-stack_change(i::Union{Block, Loop, If}) = 0
-stack_change(i::Union{Const, Local, Global}) = 1
-
-# Compute the stack change across a vector of instructions
-stack_change(i::Vector{Instruction}) = sum(map(stack_change, i) |> v -> isempty(v) ? Int[] : v)
-
-# Compute the stack change between 2 lines, currently only allowed when the
-# the level of both is the same.
-function stack_change(code, x, y)
-  x[1:end-1] == y[1:end-1] || error("Stack change across blocks currently unsupported.")
-  x[end] < y[end] || error("Can't check stack change in reverse.")
-  block = get_line(code, x[1:end-1])
-  block = block isa Vector ? block : block.body
-  return stack_change(block[x[end]+1:y[end]-1])
-end
-
 function stack_locals(b)
   lines = Vector{Vector{Vector{Int}}}()
   liveness(b; lines=lines)
@@ -300,35 +264,25 @@ function stack_locals(b)
 end
 
 function stack_locals(b, lines)
-
-  # @show lines
-  # Once more is supported this filtering should stop being necessary.
-  # @show lines
   filter!(lines) do ls
     (length(ls) >= 2 && get_line(b, ls[end]) isa SetLocal) || return false
     return all(e->e[1:end-1]==ls[1][1:end-1], ls)
   end
-  # @show lines
   len = typemax(Int)
   while length(lines) < len
     len = length(lines)
-    # @show len
     filter!(lines) do l
       get, set = l[end-1:end]
       if stack_change(b, set, get) == 0
-        if length(l) == 2
-          set_line(b, set, Nop())
-          set_line(b, get, Nop())
-        else
-          set_line(b, set, Nop())
-          modify_line(x -> SetLocal(true, x.id), b, get)
+        set_line(b, set, Nop())
+        modify_line(b, get) do x
+          length(l) == 2 ? Nop() : SetLocal(true, x.id)
         end
         return false
       end
       return true
     end
   end
-  # @show lines, length(lines)
   return b
 end
 
@@ -410,68 +364,78 @@ function drop_removal(b::Vector{Instruction}, i::Ref{Int}, removals)
   return true
 end
 
-num_args(i::Op) = op_num_args[i.name]
+num_args(i::Op) = op_num_args_res[i.name][1]
 num_args(i::Select) = 3
 num_args(i::Union{Block, Loop, If, Nop, Const, Local}) = 0
 num_args(i::Union{Convert, Global, Drop, SetLocal}) = 1
 
-num_res(i::Op) = 1
+num_res(i::Op) = op_num_args_res[i.name][2]
 num_res(i::Select) = 1
 num_res(i::SetLocal) = i.tee ? 1 : 0
 # Changes when results added
 num_res(i::Union{Nop, Block, Loop, If, Drop}) = 0
-num_res(i::Union{Const, Convert, Local, Global, SetLocal}) = 1
+num_res(i::Union{Const, Convert, Local, Global}) = 1
 
-const op_stack_change =
+stack_change(i::Op) = op_num_args_res[i.name] |> t -> t[2] - t[1]
+stack_change(i) = num_res(i) - num_args(i)
+stack_change(i::Vector{Instruction}) = mapreduce(stack_change, +, 0, i)
+
+# Compute the stack change between 2 lines, only possible when the the level of
+# both is the same, and no branches in between.
+function stack_change(code, x, y)
+  x[1:end-1] == y[1:end-1] || error("Stack change across blocks currently unsupported.")
+  x[end] < y[end] || error("Can't check stack change in reverse.")
+  block = get_line(code, x[1:end-1])
+  block = block isa Vector ? block : block.body
+  return stack_change(block[x[end]+1:y[end]-1])
+end
+
+const op_num_args_res =
   Dict(
-    :eqz	  =>  0,
-    :eq	    =>  -1,
-    :ne	    =>  -1,
-    :lt_s	  =>  -1,
-    :lt_u	  =>  -1,
-    :gt_s	  =>  -1,
-    :gt_u	  =>  -1,
-    :le_s	  =>  -1,
-    :le_u	  =>  -1,
-    :ge_s	  =>  -1,
-    :ge_u	  =>  -1,
-    :clz    =>  0,
-    :ctz    =>  0,
-    :popcnt =>  0,
-    :add    =>  -1,
-    :sub    =>  -1,
-    :mul    =>  -1,
-    :div_s  =>  -1,
-    :div_u  =>  -1,
-    :rem_s  =>  -1,
-    :rem_u  =>  -1,
-    :and    =>  -1,
-    :or     =>  -1,
-    :xor    =>  -1,
-    :shl    =>  -1,
-    :shr_s  =>  -1,
-    :shr_u  =>  -1,
+    :eqz	  =>  (1, 1),
+    :eq	    =>  (2, 1),
+    :ne	    =>  (2, 1),
+    :lt_s	  =>  (2, 1),
+    :lt_u	  =>  (2, 1),
+    :gt_s	  =>  (2, 1),
+    :gt_u	  =>  (2, 1),
+    :le_s	  =>  (2, 1),
+    :le_u	  =>  (2, 1),
+    :ge_s	  =>  (2, 1),
+    :ge_u	  =>  (2, 1),
+    :clz    =>  (1, 1),
+    :ctz    =>  (1, 1),
+    :popcnt =>  (1, 1),
+    :add    =>  (2, 1),
+    :sub    =>  (2, 1),
+    :mul    =>  (2, 1),
+    :div_s  =>  (2, 1),
+    :div_u  =>  (2, 1),
+    :rem_s  =>  (2, 1),
+    :rem_u  =>  (2, 1),
+    :and    =>  (2, 1),
+    :or     =>  (2, 1),
+    :xor    =>  (2, 1),
+    :shl    =>  (2, 1),
+    :shr_s  =>  (2, 1),
+    :shr_u  =>  (2, 1),
     # Check these two.
-    :rotl   =>  -1,
-    :rotr   =>  -1,
+    :rotl   =>  (2, 1),
+    :rotr   =>  (2, 1),
 
-    :lt       =>  -1,
-    :gt       =>  -1,
-    :le       =>  -1,
-    :ge       =>  -1,
-    :abs      =>  0,
-    :neg      =>  0,
-    :ceil     =>  0,
-    :floor    =>  0,
-    :trunc    =>  0,
-    :nearest  =>  0,
-    :sqrt     =>  0,
-    :div      =>  -1,
-    :min      =>  -1,
-    :max      =>  -1,
-    :copysign =>  -1
-)
-
-# Dict assumes all the operations in op_stack_change return 1 value, if that
-# stops being true do this in a better way.
-const op_num_args = Dict(n => -c + 1 for (n, c) in op_stack_change)
+    :lt       =>  (2, 1),
+    :gt       =>  (2, 1),
+    :le       =>  (2, 1),
+    :ge       =>  (2, 1),
+    :abs      =>  (1, 1),
+    :neg      =>  (1, 1),
+    :ceil     =>  (1, 1),
+    :floor    =>  (1, 1),
+    :trunc    =>  (1, 1),
+    :nearest  =>  (1, 1),
+    :sqrt     =>  (1, 1),
+    :div      =>  (2, 1),
+    :min      =>  (2, 1),
+    :max      =>  (2, 1),
+    :copysign =>  (2, 1)
+  )
