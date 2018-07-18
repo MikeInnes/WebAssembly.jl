@@ -101,7 +101,7 @@ function liveness_(x::Local, i, alive, branch, rig, lines, as...)
   lines != nothing && push!(lines[id], push!(copy(branch), i))
 end
 
-function liveness_(x::SetLocal, i, alive, branch, rig, lines, perm_alive, skippedsets)
+function liveness_(x::SetLocal, i, alive, branch, rig, lines, perm_alive, extra_sets)
   if haskey(alive, x.id)
     id = alive[x.id]
     if !haskey(perm_alive, x.id)
@@ -109,7 +109,7 @@ function liveness_(x::SetLocal, i, alive, branch, rig, lines, perm_alive, skippe
     end
     lines != nothing && push!(lines[id], push!(copy(branch), i))
   else
-    skippedsets != nothing && push!(skippedsets, push!(copy(branch), i))
+    extra_sets != nothing && push!(extra_sets, push!(copy(branch), i))
   end
 end
 
@@ -161,7 +161,7 @@ end
 # lines takes a value id and returns references to all the get/sets in the code
 # so they can be updated quickly later.
 
-# skippedsets is any encountered set where the value isn't used.
+# extra_sets is any encountered set where the value isn't used.
 
 # alive is essentially a set of currently used registers, but with the id of the
 # value stored.
@@ -173,16 +173,16 @@ function liveness( code::Vector{Instruction}
                  , perm_alive::Dict{Int, Int}=Dict{Int, Int}()
                  ; rig::Union{Ref{Int}, SimpleGraph{Int}}=Ref{Int}(0)
                  , lines::Union{Void, Vector{Vector{Vector{Int}}}}=nothing
-                 , skippedsets::Union{Void, Vector{Vector{Int}}}=nothing
+                 , extra_sets::Union{Void, Vector{Vector{Int}}}=nothing
                  )
   for i in length(code):-1:1
     x = code[i]
     if x isa Local || x isa SetLocal
-      liveness_(x, i, alive, branch, rig, lines, perm_alive, skippedsets)
+      liveness_(x, i, alive, branch, rig, lines, perm_alive, extra_sets)
     elseif x isa Block || x isa Loop || x isa If
-      liveness_(x, i, alive, branch, branches, perm_alive; rig=rig, lines=lines, skippedsets=skippedsets)
+      liveness_(x, i, alive, branch, branches, perm_alive; rig=rig, lines=lines, extra_sets=extra_sets)
     elseif x isa Branch
-      liveness_(x, code, i, alive, branch, branches, perm_alive, rig, lines; skippedsets=skippedsets)
+      liveness_(x, code, i, alive, branch, branches, perm_alive, rig, lines; extra_sets=extra_sets)
       break
     end
   end
@@ -205,8 +205,8 @@ apply_line(i::Vector, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> isempty(bs
 function allocate_registers(func::Func)
   rig = SimpleGraph{Int}()
   lines = Vector{Vector{Vector{Int}}}()
-  skippedsets = Vector{Vector{Int}}()
-  alive = liveness(func; rig=rig, lines=lines, skippedsets=skippedsets)
+  extra_sets = Vector{Vector{Int}}()
+  alive = liveness(func; rig=rig, lines=lines, extra_sets=extra_sets)
 
   # @show fieldnames(rig)
   # @show field
@@ -231,8 +231,8 @@ function allocate_registers(func::Func)
   # This is necessary as the register hasn't been updated and might interfere
   # with operation.
   # TODO: Drop removal, not possible in all cases. (E.g.: a conditional drop)
-  isempty(skippedsets) || println("Some sets aren't used, replacing with drop (nop for tee).")
-  for s in skippedsets
+  isempty(extra_sets) || println("Some sets aren't used, replacing with drop (nop for tee).")
+  for s in extra_sets
     modify_line(x -> x.tee ? Nop() : Drop(), func, s)
   end
 
@@ -250,10 +250,10 @@ function drawGraph(filename, graph)
 end
 
 function liveness_optimisations(b)
-  ss = Vector{Vector{Int}}()
+  es = Vector{Vector{Int}}()
   lss = Vector{Vector{Vector{Int}}}()
-  liveness(b; skippedsets=ss, lines=lss);
-  b = useless_sets(b, ss, lss)
+  liveness(b; extra_sets=es, lines=lss);
+  b = extra_sets(b, es, lss)
   b = stack_locals(b, lss)
   return nops(b)
 end
@@ -332,25 +332,25 @@ function stack_locals(b, lines)
   return b
 end
 
-function useless_sets(b)
-  ss = Vector{Vector{Int}}()
+function extra_sets(b)
+  es = Vector{Vector{Int}}()
   lss = Vector{Vector{Vector{Int}}}()
-  liveness(b; skippedsets=ss, lines=lss);
-  return nops(useless_sets(b, ss, lss))
+  liveness(b; extra_sets=es, lines=lss);
+  return nops(extra_sets(b, es, lss))
 end
 
 # Removes sets that don't later use the value. If removing the set creates more
 # useless sets, removes those too without recomputing liveness.
-function useless_sets(b, ss, lss)
-  while length(ss) > 0
-    filter!(ss) do s
+function extra_sets(b, es, lss)
+  while length(es) > 0
+    filter!(es) do s
       modify_line(x -> x.tee ? Nop() : Drop(), b, s) == Drop()
     end
-    for s in ss
+    for s in es
       drop_removal(get_line(b, s[1:end-1]), s[end])
     end
     map(ls -> filter!(l -> get_line(b, l) != Nop(), ls), lss)
-    ss = map(first, filter(ls -> length(ls) == 1 && get_line(b, ls[1]) isa SetLocal, lss))
+    es = map(first, filter(ls -> length(ls) == 1 && get_line(b, ls[1]) isa SetLocal, lss))
   end
   return b
 end
