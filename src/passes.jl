@@ -86,15 +86,9 @@ optimise(b::Block) = b |> deadcode |> makeifs |> rmblocks
 function optimise(m::Module, funcs=nothing)
   funcs = funcs == nothing ? Dict(f.name => f for f in m.funcs) : funcs
   map!(m.funcs, m.funcs) do f
-    body = optimise(f.body)
-    # body = optimise(f.body) |> b -> stack_locals(b, funcs)#b -> liveness_optimisations(b, funcs)
-    body = optimise(f.body) #|> b -> liveness_optimisations(b, funcs)
-    # body = body |> b -> extra_sets(b, funcs)#b -> liveness_optimisations(b, funcs)
-    f = Func(f.name, f.params, f.returns, f.locals, body)
-    @show f
-    # println("new call <-------------------")
-    # @show f
-    # @show allocate_registers(f)
+    body = optimise(f.body) |> b -> liveness_optimisations(b, funcs)
+    locals, body = allocate_registers(body, f.params, f.locals)
+    Func(f.name, f.params, f.returns, locals, body)
   end
   return m
 end
@@ -165,11 +159,11 @@ function liveness_(x::Branch, code, i, alive, branch, branches, perm_alive, rig,
   perm_alive = merge(perm_alive, Dict(setdiff(alive, br[1])))
   x.cond ? merge!(alive, copy(br[1])) : merge!(empty!(alive), copy(br[1]), perm_alive)
   if !br[2] # If not branching to a loop.
-    @show perm_alive
     liveness(code[1:i-1], alive, branch, branches, perm_alive; rig=rig, lines=lines, types=types, values_of_type=values_of_type, ks...)
   else
     # First pass of loop to get alive set after loop.
-    a_f = liveness(code[1:i-1], copy(alive), branch, branches, merge(perm_alive, alive); rig=Ref{Int}(rig isa Ref ? rig.x : nv(rig)))
+    perm_alive = merge(perm_alive, alive)
+    a_f = liveness(code[1:i-1], copy(alive), branch, branches, perm_alive; rig=Ref{Int}(rig isa Ref ? rig.x : nv(rig)))
 
     a_diff = Dict(a => rig isa Ref ? rig.x += 1 : (add_vertex!(rig); nv(rig)) for (a, _) in setdiff(a_f, alive))
     merge!(alive, a_diff)
@@ -224,7 +218,6 @@ function liveness( code::Vector{Instruction}
                  , values_of_type::Dict{WType, Vector{Int}}=Dict{WType, Vector{Int}}()
                  )
   for i in length(code):-1:1
-    @show alive
     x = code[i]
     if x isa Local || x isa SetLocal
       liveness_(x, i, alive, branch, rig, lines, perm_alive, extra_sets, types, values_of_type)
@@ -244,105 +237,88 @@ modify_line(f, code, branch) = apply_line(code, copy(branch), f)
 
 apply_line(i::Func, bs, f) = apply_line(i.body.body, bs, f)
 apply_line(i::Union{Block, Loop}, bs, f) = apply_line(i.body, bs, f)
-# apply_line(i::If, bs, f) = bs |> shift! |> b -> apply_line(getfield(i, b), bs, f)
-# apply_line(i::If, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> getfield(i, b) |> i -> isempty(bs) ? i : apply_line(i, bs, f)
 apply_line(i::If, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> apply_line(getfield(i, b), bs, f)
 
 # apply_line(i::Vector, bs, f) = (@show bs) |> shift! |> b -> isempty(bs) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
 apply_line(i::Vector, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> isempty(bs) && !(typeof(i[b]) ∈ [Block, Loop, If]) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
 
+allocate_registers(f::Func) = Func(f.name, f.params, f.returns, allocate_registers(f.body, f.params, f.locals)...)
 
-function allocate_registers(func::Func)
+function allocate_registers(b::Block, params, locals)
   rig = SimpleGraph{Int}()
   lines = Vector{Vector{Vector{Int}}}()
   extra_sets = Vector{Vector{Int}}()
-  types = vcat(func.params, func.locals)
+  types = vcat(params, locals)
   values_of_type=Dict{WType, Vector{Int}}()
-  alive = liveness(func; rig=rig, lines=lines, extra_sets=extra_sets, types=types, values_of_type=values_of_type)
+  alive = liveness(b; rig=rig, lines=lines, extra_sets=extra_sets, types=types, values_of_type=values_of_type)
 
-  # Fixup for when not all parameters are used.
-  if !all(i -> haskey(alive, i-1), eachindex(func.params))
-    for i in eachindex(func.params)
-      if !haskey(alive, i-1)
-        add_vertex!(rig)
-        id = nv(rig)
-        push!(alive, i-1 => nv(rig))
-        typ = func.params[i]
-        for (t, vs) in values_of_type
-          t == typ && continue
-          for v_ in vs
-            add_edge!(rig, id, v_)
-          end
+  # Make sure all parameters are in the alive set.
+  for i in eachindex(params)
+    if !haskey(alive, i-1)
+      add_vertex!(rig)
+      id = nv(rig)
+      push!(alive, i-1 => nv(rig))
+      typ = params[i]
+      for (t, vs) in values_of_type
+        t == typ && continue
+        for v_ in vs
+          add_edge!(rig, id, v_)
         end
       end
     end
-    for v in values(alive)
-      for v_ in values(alive)
-        v == v_ && continue
-        add_edge!(rig, v, v_)
-        println("this")
-      end
+  end
+
+  # Make sure parameters can't be given the same colour.
+  for v in values(alive)
+    for v_ in values(alive)
+      v == v_ && continue
+      add_edge!(rig, v, v_)
+      println("this")
     end
   end
-  # drawGraph("what.svg", rig)
 
   coloring = rig != SimpleGraph() ? rig |> greedy_color : LightGraphs.coloring(0, Vector{Int}())
-  @show coloring
 
   rs = Set(0:coloring.num_colors-1)
-  c_to_r = Dict(coloring.colors[alive[i]] => i for i in 0:length(func.params)-1)
-  # c_to_r = [coloring.colors[alive[i]] for i in 0:length(alive)-1]
-  @show c_to_r
-  length(c_to_r) == length(func.params) || error()
-  i = length(func.params) - 1
+  c_to_r = Dict(coloring.colors[alive[i]] => i for i in 0:length(params)-1)
+  i = length(params) - 1
   register_colours = [haskey(c_to_r, c) ? c_to_r[c] : i+=1 for c in 1:coloring.num_colors]
-  @show register_colours
-  @show coloring.colors
   col(value_id) = register_colours[coloring.colors[value_id]]
   for v in eachindex(lines)
     for l in lines[v]
-      modify_line(func, l) do s
+      modify_line(b, l) do s
         s isa Local ? Local(col(v)) : (s isa SetLocal ? SetLocal(s.tee, col(v)) : error())
       end
     end
   end
-  @show func
 
   # This is necessary as the register hasn't been updated and might interfere
   # with operation.
-  # TODO: Drop removal, not possible in all cases. (E.g.: a conditional drop)
   isempty(extra_sets) || println("Some sets aren't used, replacing with drop (nop for tee).")
   for s in extra_sets
-    modify_line(x -> x.tee ? Nop() : Drop(), func, s)
+    modify_line(x -> x.tee ? Nop() : Drop(), b, s)
   end
 
-  locals = func.locals[1:coloring.num_colors-length(func.params)]
-  # @show locals
-  # locals = Dict()
-  locals = Dict(zip(0:length(func.params)-1, func.params))
-  # for i in eachindex(func.params)
-  #   push!(locals, i-1 => func.params[i])
-  # end
+  # Calculate the new locals
+  locals = Dict(zip(0:length(params)-1, params))
   for (t, vs) in values_of_type
+    # Going through all vs not strictly necessary, but makes for a good assertion.
     for v in vs
       get!(locals, col(v), t) == t || error("Bad assignment")
     end
   end
-  # @show locals
-  # # locals = [get!(locals, i, func.params[i]) for i in length(func.params)+1:length(locals)]
-  locals = [locals[i] for i in length(func.params):coloring.num_colors-1]
-  # @show locals
-  return Func(func.name, func.params, func.returns, locals, func.body)
+  locals = [locals[i] for i in length(params):coloring.num_colors-1]
+  return locals, b
 end
 
-using GraphLayout
-function drawGraph(filename, graph)
-  # Output the graph
-  am = Matrix(adjacency_matrix(graph))
-  loc_x, loc_y = layout_spring_adj(am)
-  # draw_layout_adj(am, loc_x, loc_y, filename=filename, arrowlengthfrac=0)
-  draw_layout_adj(am, loc_x, loc_y, filename=filename)
-end
+# using GraphLayout
+# function drawGraph(filename, graph)
+#   # Output the graph
+#   am = Matrix(adjacency_matrix(graph))
+#   loc_x, loc_y = layout_spring_adj(am)
+#   # draw_layout_adj(am, loc_x, loc_y, filename=filename, arrowlengthfrac=0)
+#   draw_layout_adj(am, loc_x, loc_y, filename=filename)
+# end
 
 function liveness_optimisations(b, funcs)
   es = Vector{Vector{Int}}()
@@ -364,8 +340,7 @@ function stack_locals(b, lines, funcs)
   filter!(lines) do ls
     (length(ls) >= 2 && get_line(b, ls[end]) isa SetLocal) || return false
     ls[end][1:end-1]==ls[end-1][1:end-1] || return false
-    return all(e->!(e isa Branch), (@show get_line(b, ls[end][1:end-1]))[ls[end][end]:ls[end-1][end]])
-    # return all(e->e[1:end-1]==ls[1][1:end-1], ls)
+    return all(e->!(e isa Branch), get_line(b, ls[end][1:end-1])[ls[end][end]:ls[end-1][end]])
   end
   len = typemax(Int)
   while length(lines) < len
