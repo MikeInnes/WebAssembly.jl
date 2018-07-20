@@ -30,7 +30,6 @@ function wrapper(efs)
   """]
   fs = [string("  ", n, ": ", ffiType(f.typ)) for (n, f) in efs]
   return string(wrapper[1], join(fs, ", \n"), wrapper[2])
-
 end
 
 function exportfs(m)
@@ -48,13 +47,10 @@ function fetch_(names)
   }));
   """]
   defs = [string("  ", n, " = library.", n, ".bind(library);") for n in names]
-  # fetch = ["library.fetch('", "').then(() => {\n}).catch(console.error);"]
   return join(fetch, join(defs, "\n"))
 end
 
-# getbasename(n::Symbol, f) = getbasename(string(n), f)
-
-function getbasename(nbol::Symbol, f)
+function getbasename(nbol, f)
   n = string(nbol)
   snd = join(WType.(f.typ[1]), "_")
   length(n) < length(snd) && return nbol
@@ -89,15 +85,12 @@ end
 function jsmodule(m)
   names, efs = exportfs(m)
   defs = wrapper(efs)
-  # ns = join(names, ", ")
   fetch = fetch_(names)
 
-  # @show getbasename("addTwo_i32_i32", efs[:addTwo])
   tnames, tied = tiefunctions(efs)
 
   vars = string("var ", join(names, ", "), ";\n");
   exports = string("export { ", join(vcat(names, tnames),", "), " };\nexport default library;\n")
 
-  # wrapper(efs)
   join([wtype, defs, vars, fetch, tied, exports], "\n")
 end
