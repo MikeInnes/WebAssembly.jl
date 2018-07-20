@@ -95,6 +95,9 @@ struct Func
   returns::Vector{WType}
   locals::Vector{WType}
   body::Block
+
+  # Store the julia type so we know e.g. whether an i32 is a pointer or a value.
+  typ::Tuple{Vector{DataType},Vector{DataType}}
 end
 
 struct Table
