@@ -52,26 +52,52 @@ function fetch_(names)
   return join(fetch, join(defs, "\n"))
 end
 
-function getbasename(n, f)
+# getbasename(n::Symbol, f) = getbasename(string(n), f)
+
+function getbasename(nbol::Symbol, f)
+  n = string(nbol)
   snd = join(WType.(f.typ[1]), "_")
-  length(n) < length(snd) && return n
+  length(n) < length(snd) && return nbol
   if n[end-length(snd)+1:end] == snd
-    return n[1:end-length(snd)-1]
+    return Symbol(n[1:end-length(snd)-1])
   end
-  return n
+  return nbol
+end
+
+function basenamenottaken(efs)
+  same_name = Dict{Symbol, Vector{Symbol}}()
+  for (n, f) in efs
+    push!(get!((a...) -> Vector(), same_name, getbasename(n, f)), n)
+  end
+  @show keys(same_name)
+  filter!((k, ns) -> !any(n -> n==k, @show ns), same_name)
+  return keys(same_name)
+end
+
+function tiefunctions(efs)
+  tieable = basenamenottaken(efs)
+  template =
+    ["var "
+    ," = (...a) => eval(\""
+    ,"_\" + a.map(wtype).join(\"_\") + \"(\" + a.join() + \")\");\nlibrary."
+    ," = "
+    ,"\n"]
+  ts = [join(template, n) for n in tieable]
+  return map(String, tieable), join(ts, ";\n")
 end
 
 function jsmodule(m)
   names, efs = exportfs(m)
   defs = wrapper(efs)
-  ns = join(names, ", ")
+  # ns = join(names, ", ")
   fetch = fetch_(names)
 
-  @show getbasename("addTwo_i32_i32", efs[:addTwo])
+  # @show getbasename("addTwo_i32_i32", efs[:addTwo])
+  tnames, tied = tiefunctions(efs)
 
-  vars = string("var ", ns, ";\n");
-  exports = string("export { ", ns, " };\nexport default library;\n")
+  vars = string("var ", join(names, ", "), ";\n");
+  exports = string("export { ", join(vcat(names, tnames),", "), " };\nexport default library;\n")
 
   # wrapper(efs)
-  join([defs, vars, fetch, exports], "\n")
+  join([wtype, defs, vars, fetch, tied, exports], "\n")
 end
