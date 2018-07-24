@@ -19,10 +19,10 @@ include("bytecode.jl")
 
 module Instructions
 
-using ..WebAssembly: Instruction, Const, Nop, Local, SetLocal, Op, Select, Convert,
+using ..WebAssembly: Instruction, Const, Nop, Local, SetLocal, Op, Select, Convert, MemoryOp,
   Block, If, Loop, Branch, Call, Return, Unreachable, Label, Goto, nop, unreachable
 
-export Instruction, Const, Nop, Local, SetLocal, Op, Select, Convert,
+export Instruction, Const, Nop, Local, SetLocal, Op, Select, Convert, MemoryOp,
   Block, If, Loop, Branch, Call, Return, Unreachable, Label, Goto, nop, unreachable
 
 end
