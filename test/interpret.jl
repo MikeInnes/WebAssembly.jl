@@ -1,9 +1,5 @@
-using MacroTools: postwalk
-
-macro pair_with_wasm(xs)
-  postwalk(xs) do x
-    !(x isa Expr) ? :($x, $(Symbol(x, :_wasm))) : x
-  end
+function pair_with_wasm(xs)
+  [(eval(x), eval(Symbol(x, :_wasm))) for x in xs]
 end
 
 macro wast_str(wast)
@@ -93,12 +89,12 @@ addTwo_wasm = wast"""
   (i32.add))
 """
 
-tests = @pair_with_wasm [ relu_ifelse
-                        , relu_ternary
-                        , relu_if_then_else
-                        , pow
-                        , addTwo
-                        ]
+tests = pair_with_wasm([ :relu_ifelse
+                       , :relu_ternary
+                       , :relu_if_then_else
+                       , :pow
+                       , :addTwo
+                       ])
 
 fib(x) = x <= 1 ? 1 : fib(x - 1) + fib(x - 2)
 this(x) = pow(x + 1, x - 1)
@@ -124,7 +120,7 @@ end
 
 @testset "Parse-Interpret" begin
 
-relu_wasm = relu_ifelse_wast
+relu_wasm = relu_ifelse_wasm
 
 relu_wasm_expected = Func(Symbol("#relu_Int64"), [i64], [i64], [], Block([Const(0), Local(0), Local(0), Const(0), Op(i64, :lt_s), Select(), Return()]))
 @test relu_wasm.body.body == relu_wasm_expected.body.body

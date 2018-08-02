@@ -17,7 +17,7 @@ function deadcode(x)
   prewalk(x) do x
     applyblock(x) do is
       i = findfirst(b -> b isa Branch && !b.cond, is)
-      i == 0 ? is : is[1:i]
+      i == nothing ? is : is[1:i]
     end
   end
 end
@@ -55,7 +55,7 @@ function makeifs(code)
   prewalk(code) do x
     x isa Block || return x
     i = findfirst(x -> x isa Branch, x.body)
-    i != 0 && x.body[i].cond || return x
+    i != nothing && x.body[i].cond || return x
     cond = x.body[1:i-1]
     cond[end] == Op(i32, :eqz) ? pop!(cond) : push!(cond, Op(i32, :eqz))
     fixbranches = incbranches(Block(x.body[i+1:end])).body
