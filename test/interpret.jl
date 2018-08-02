@@ -1,9 +1,5 @@
-using MacroTools: postwalk
-
-macro pair_with_wasm(xs)
-  postwalk(xs) do x
-    !(x isa Expr) ? :($x, $(Symbol(x, :_wasm))) : x
-  end
+function pair_with_wasm(xs)
+  [(eval(x), eval(Symbol(x, :_wasm))) for x in xs]
 end
 
 macro wast_str(wast)
@@ -93,12 +89,12 @@ addTwo_wasm = wast"""
   (i32.add))
 """
 
-tests = @pair_with_wasm [ relu_ifelse
-                        , relu_ternary
-                        , relu_if_then_else
-                        , pow
-                        , addTwo
-                        ]
+tests = pair_with_wasm([ :relu_ifelse
+                       , :relu_ternary
+                       , :relu_if_then_else
+                       , :pow
+                       , :addTwo
+                       ])
 
 fib(x) = x <= 1 ? 1 : fib(x - 1) + fib(x - 2)
 this(x) = pow(x + 1, x - 1)
