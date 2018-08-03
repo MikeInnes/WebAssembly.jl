@@ -149,7 +149,7 @@ end
 # Reads in base.wasm, merges it with the module m and the calls getModule.
 mergeWithBase(m) = merge_module(getBase(), m)
 
-getBase() = readModule("src/base.wasm")
+getBase() = readModule(joinpath(dirname(@__FILE__), "base.wasm"))
 
 # Assumes only one module has globals, data sections don't overlap e.t.c.
 # Not very general.
@@ -241,10 +241,10 @@ function readTypes(f)
 end
 
 function readMemory(f)
-  readArray(f, Vector{Tuple{UInt32, Union{UInt32, Void}}}()) do
+  readArray(f, Vector{Tuple{UInt32, Union{UInt32, Nothing}}}()) do
     flag = readLeb128(f, Bool)
     initial = readLeb128(f, UInt32)
-    maximum = flag ? readLeb128(i,bs,UInt32) : Void()
+    maximum = flag ? readLeb128(i,bs,UInt32) : nothing
     return (initial, maximum)
   end
 end
@@ -355,6 +355,7 @@ function readModule(f)
     id > id_ || id == 0 || error("Sections must be in increasing order.")
     payload_len = readLeb128(f, UInt32)
     if id == 0
+      println("like this except you actually do something")
       # Only gets function names for now
       section_end = position(f) + payload_len
       name = readutf8(f)
@@ -364,6 +365,7 @@ function readModule(f)
           read_func_names = readNames(f, names)
         end
       end
+      @show names
       seek(f, section_end)
     elseif id == 1 # Types
       types = readTypes(f)
@@ -389,6 +391,7 @@ function readModule(f)
       error("Unknown Section: $id")
     end
   end
+  @show names
   names = getNames(names, [(:func, length(f_types) + length(imports)), (:memory, length(memory))])
   # show(names[:func][1])
 
@@ -434,7 +437,7 @@ readsymbol(f) = f |> readBytes |> Symbol
 
 function readBody(f, fns, no_result=false)
   is = Vector{Instruction}()
-  result = no_result ? Void() : types_r[read1(f)]
+  result = no_result ? nothing : types_r[read1(f)]
   b = read1(f)
   while (b != opcodes[:end]) && (b != opcodes[:else])
     op = readOp(opcodes_r[b], f, fns) :: Instruction
@@ -493,7 +496,7 @@ const types =
     f64      => 0x7c,
     :anyfunc => 0x70,
     :func    => 0x60,
-    Void()   => 0x40
+    nothing   => 0x40
   )
 
 const types_r = Dict(v => k for (k, v) in types)

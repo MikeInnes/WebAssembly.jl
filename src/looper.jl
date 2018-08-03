@@ -96,7 +96,7 @@ function insertjump(is, j)
   splice(is, jrange(j), [body, [nop for _ = 1:length(jrange(j))-1]...])
 end
 
-insertjumps(is, js) = reduce(insertjump, is, reverse(js))
+insertjumps(is, js) = reduce(insertjump, reverse(js); init=is)
 
 function restructure(b::Block)
   is = striplabels(b.body)

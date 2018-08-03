@@ -25,7 +25,7 @@ end
 # The state of the module during execution
 struct State
   mem :: Vector{Vector{UInt8}}        # Linear Memory
-  max :: Vector{Union{UInt32, Void}}  # Max size of each linear memory
+  max :: Vector{Union{UInt32, Nothing}}  # Max size of each linear memory
   fs  :: Dict{Symbol, Any}            # Function space
   gs  :: Vector{Tuple{Bool, Integer}} # Global Variables, bool determines mutability.
 end
@@ -146,7 +146,7 @@ operations =
 
 # Level Agnostic Functions
 
-apInstr(i::Nop,         ms) = Void()
+apInstr(i::Nop,         ms) = nothing
 apInstr(i::Local,       ms) = push!(ms,ms[i.id + 1]);
 apInstr(i::Const,       ms) = push!(ms,value(i));
 apInstr(i::Unreachable, ms) = error("Unreachable")

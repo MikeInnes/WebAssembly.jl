@@ -87,23 +87,23 @@ end
 struct Block <: Instruction
   body::Vector{Instruction}
 
-  result::Union{WType, Void}
+  result::Union{WType, Nothing}
 end
-Block(body) = Block(body, Void())
+Block(body) = Block(body, nothing)
 
 struct If <: Instruction
   t::Vector{Instruction}
   f::Vector{Instruction}
 
-  result::Union{WType, Void}
+  result::Union{WType, Nothing}
 end
-If(t,f) = If(t, f, Void())
+If(t,f) = If(t, f, nothing)
 
 struct Loop <: Instruction
   body::Vector{Instruction}
-  result::Union{WType, Void}
+  result::Union{WType, Nothing}
 end
-Loop(body) = Loop(body, Void())
+Loop(body) = Loop(body, nothing)
 
 struct Branch <: Instruction
   cond::Bool
@@ -142,7 +142,7 @@ end
 struct Mem
   name::Symbol
   min::UInt32
-  max::Union{UInt32, Void}
+  max::Union{UInt32, Nothing}
 end
 
 struct Global
@@ -183,7 +183,7 @@ struct Module
   globals::Vector{Global}
   elem::Vector{Elem}
   data::Vector{Data}
-  start::Union{Symbol, Void}
+  start::Union{Symbol, Nothing}
   imports::Vector{Import}
   exports::Vector{Export}
 end

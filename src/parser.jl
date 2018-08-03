@@ -124,5 +124,5 @@ end
 
 function module_(wast)
   m = WebAssembly.Module([], [], [], [], [], [], [], nothing, [], [])
-  return reduce(module_items, m, wast[2:end])
+  return reduce(module_items, wast[2:end]; init=m)
 end
