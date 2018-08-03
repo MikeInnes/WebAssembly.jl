@@ -496,7 +496,7 @@ const types =
     Void()   => 0x40
   )
 
-const types_r = map(reverse, types)
+const types_r = Dict(v => k for (k, v) in types)
 
 const opcodes =
   Dict(
@@ -688,7 +688,7 @@ const opcodes =
   )
 
 # Reverse dictionary of all opcodes including conversions.
-const opcodes_r = map(reverse, opcodes)
+const opcodes_r = Dict(v => k for (k, v) in opcodes)
 
 const external_kind =
   Dict(
@@ -698,4 +698,4 @@ const external_kind =
     :global => 0x03
   )
 
-const external_kind_r = map(reverse, external_kind)
+const external_kind_r = Dict(v => k for (k, v) in external_kind)
