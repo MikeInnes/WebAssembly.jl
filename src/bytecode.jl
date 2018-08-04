@@ -508,6 +508,7 @@ const opcodes =
     Select()      => 0x1b,
     Unreachable() => 0x00,
     Nop()         => 0x01,
+    Drop()        => 0x1a,
 
     (Local, ()) => 0x20,
 

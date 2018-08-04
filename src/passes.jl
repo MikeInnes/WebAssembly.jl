@@ -1,5 +1,5 @@
-applyblock(f, x::Union{Block,Loop}) = typeof(x)(f(x.body))
-applyblock(f, x::If) = If(f(x.t), f(x.f))
+applyblock(f, x::Union{Block,Loop}) = typeof(x)(f(x.body), x.result)
+applyblock(f, x::If) = If(f(x.t), f(x.f), x.result)
 applyblock(f, x) = x
 
 walk(x, inner, outer) = outer(applyblock(xs -> map(inner, xs), x))
@@ -53,7 +53,7 @@ end
 
 function makeifs(code)
   prewalk(code) do x
-    x isa Block || return x
+    x isa Block && x.result == nothing || return x
     i = findfirst(x -> x isa Branch, x.body)
     i != nothing && x.body[i].cond || return x
     cond = x.body[1:i-1]
@@ -87,7 +87,11 @@ function optimise(m::Module, funcs=nothing)
   funcs = funcs == nothing ? Dict(f.name => f for f in m.funcs) : funcs
   map!(m.funcs, m.funcs) do f
     body = optimise(f.body) |> b -> liveness_optimisations(b, funcs)
+    # body = f.body |> rmblocks |> makeifs |> deadcode
+    # body = liveness_optimisations(f.body, funcs)
+    # locals, body = allocate_registers(f.body, f.params, f.locals)
     locals, body = allocate_registers(body, f.params, f.locals)
+    # Func(f.name, f.params, f.returns, locals, body)
     Func(f.name, f.params, f.returns, locals, body)
   end
   return m
@@ -120,6 +124,24 @@ function liveness_(x::Local, i, alive, branch, rig, lines, pa, es, types, values
     end
     return id
   end
+  # Proves that the graph does not need updating.
+  if rig isa SimpleGraph
+    for v in values(alive)
+      if id != v
+        has_edge(rig, id, v) || error()
+      end
+    end
+    if types != nothing
+      typ = types[x.id + 1]
+      for (t, vs) in values_of_type
+        t == typ && continue
+        for v in vs
+          has_edge(rig, id, v) || error()
+        end
+      end
+      push!(get!(values_of_type, typ, Vector{Int}()), id)
+    end
+  end
   lines != nothing && push!(lines[id], push!(copy(branch), i))
 end
 
@@ -130,6 +152,25 @@ function liveness_(x::SetLocal, i, alive, branch, rig, lines, perm_alive, extra_
       delete!(alive, x.id)
     end
     lines != nothing && push!(lines[id], push!(copy(branch), i))
+
+    # Proves that the graph does not need updating.
+    if rig isa SimpleGraph
+      for v in values(alive)
+        if id != v
+          has_edge(rig, id, v) || error()
+        end
+      end
+      if types != nothing
+        typ = types[x.id + 1]
+        for (t, vs) in values_of_type
+          t == typ && continue
+          for v in vs
+            has_edge(rig, id, v) || error()
+          end
+        end
+        push!(get!(values_of_type, typ, Vector{Int}()), id)
+      end
+    end
   else
     extra_sets != nothing && push!(extra_sets, push!(copy(branch), i))
   end
@@ -257,7 +298,7 @@ function allocate_registers(b::Block, params, locals)
     if !haskey(alive, i-1)
       add_vertex!(rig)
       id = nv(rig)
-      push!(alive, i-1 => nv(rig))
+      push!(alive, i-1 => id)
       typ = params[i]
       for (t, vs) in values_of_type
         t == typ && continue
@@ -273,11 +314,10 @@ function allocate_registers(b::Block, params, locals)
     for v_ in values(alive)
       v == v_ && continue
       add_edge!(rig, v, v_)
-      println("this")
     end
   end
 
-  coloring = rig != SimpleGraph() ? rig |> greedy_color : LightGraphs.coloring(0, Vector{Int}())
+  coloring = rig != SimpleGraph() ? greedy_color(rig, sort_degree=true) : LightGraphs.coloring(0, Vector{Int}())
 
   rs = Set(0:coloring.num_colors-1)
   c_to_r = Dict(coloring.colors[alive[i]] => i for i in 0:length(params)-1)
@@ -421,7 +461,7 @@ function drop_removal(b::Vector{Instruction}, i::Ref{Int}, removals, funcs)
   args_left = num_args(b[i.x], funcs)
   while args_left != 0
     op = b[i.x-=1]
-    (op isa Branch || op isa Call) && return false
+    (op isa Branch || op isa Call || op isa MemoryOp && op.typ == :store) && return false
     res = num_res(op, funcs)
     res > args_left && return false
     remove = res <= args_left && res != 0
@@ -447,19 +487,23 @@ end
 
 num_args(i::Op, _) = op_num_args_res[i.name][1]
 num_args(i::Select, _) = 3
-num_args(i::Union{Block, Loop, If, Nop, Const, Local}, _) = 0
+num_args(i::Union{Block, Loop, Nop, Const, Local}, _) = 0
+num_args(i::If) = @show 1
 num_args(i::Union{Convert, Global, Drop, SetLocal}, _) = 1
 num_args(i::Func, _) = length(i.params)
 num_args(i::Call, funcs) = num_args(funcs[i.name], funcs)
+num_args(i::MemoryOp, _) = i.typ == :load ? 1 : 2
 
 num_res(i::Op, _) = op_num_args_res[i.name][2]
 num_res(i::Select, _) = 1
 num_res(i::SetLocal, _) = i.tee ? 1 : 0
 # Changes when results added
-num_res(i::Union{Nop, Block, Loop, If, Drop}, _) = 0
+num_res(i::Union{Nop, Drop}, _) = 0
+num_res(i::Union{Block, Loop, If}, _) = @show i.result == nothing ? 0 : 1
 num_res(i::Union{Const, Convert, Local, Global}, _) = 1
 num_res(i::Func, _) = length(i.returns)
 num_res(i::Call, funcs) = num_res(funcs[i.name], funcs)
+num_res(i::MemoryOp, _) = i.typ == :load ? 1 : 0
 
 stack_change(i::Op, _) = op_num_args_res[i.name] |> t -> t[2] - t[1]
 stack_change(i::Call, funcs) = stack_change(funcs[i.name], funcs)
