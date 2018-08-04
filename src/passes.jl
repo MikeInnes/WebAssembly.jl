@@ -278,10 +278,10 @@ modify_line(f, code, branch) = apply_line(code, copy(branch), f)
 
 apply_line(i::Func, bs, f) = apply_line(i.body.body, bs, f)
 apply_line(i::Union{Block, Loop}, bs, f) = apply_line(i.body, bs, f)
-apply_line(i::If, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> apply_line(getfield(i, b), bs, f)
+apply_line(i::If, bs, f) = isempty(bs) ? i : bs |> popfirst! |> b -> apply_line(getfield(i, b), bs, f)
 
 # apply_line(i::Vector, bs, f) = (@show bs) |> shift! |> b -> isempty(bs) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
-apply_line(i::Vector, bs, f) = isempty(bs) ? i : bs |> shift! |> b -> isempty(bs) && !(typeof(i[b]) ∈ [Block, Loop, If]) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
+apply_line(i::Vector, bs, f) = isempty(bs) ? i : bs |> popfirst! |> b -> isempty(bs) && !(typeof(i[b]) ∈ [Block, Loop, If]) ? i[b] = f(i[b]) : apply_line(i[b], bs, f)
 
 allocate_registers(f::Func) = Func(f.name, f.params, f.returns, allocate_registers(f.body, f.params, f.locals)...)
 
@@ -488,7 +488,7 @@ end
 num_args(i::Op, _) = op_num_args_res[i.name][1]
 num_args(i::Select, _) = 3
 num_args(i::Union{Block, Loop, Nop, Const, Local}, _) = 0
-num_args(i::If) = @show 1
+num_args(i::If) = 1
 num_args(i::Union{Convert, Global, Drop, SetLocal}, _) = 1
 num_args(i::Func, _) = length(i.params)
 num_args(i::Call, funcs) = num_args(funcs[i.name], funcs)
@@ -499,7 +499,7 @@ num_res(i::Select, _) = 1
 num_res(i::SetLocal, _) = i.tee ? 1 : 0
 # Changes when results added
 num_res(i::Union{Nop, Drop}, _) = 0
-num_res(i::Union{Block, Loop, If}, _) = @show i.result == nothing ? 0 : 1
+num_res(i::Union{Block, Loop, If}, _) = i.result == nothing ? 0 : 1
 num_res(i::Union{Const, Convert, Local, Global}, _) = 1
 num_res(i::Func, _) = length(i.returns)
 num_res(i::Call, funcs) = num_res(funcs[i.name], funcs)
@@ -508,7 +508,7 @@ num_res(i::MemoryOp, _) = i.typ == :load ? 1 : 0
 stack_change(i::Op, _) = op_num_args_res[i.name] |> t -> t[2] - t[1]
 stack_change(i::Call, funcs) = stack_change(funcs[i.name], funcs)
 stack_change(i, funcs) = num_res(i, funcs) - num_args(i, funcs)
-stack_change(i::Vector{Instruction}, funcs) = mapreduce(i -> stack_change(i, funcs), +, 0, i)
+stack_change(i::Vector{Instruction}, funcs) = mapreduce(i -> stack_change(i, funcs), +, i; init = 0)
 
 # Compute the stack change between 2 lines, only possible when the the level of
 # both is the same, and no branches in between.
