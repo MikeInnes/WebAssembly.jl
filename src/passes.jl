@@ -107,9 +107,9 @@ function liveness_(x::Local, i, alive, branch, rig, lines, pa, es, types, values
   id = get!(alive, x.id) do
     lines != nothing && push!(lines, [])
     rig isa Ref && return rig.x += 1
-    add_vertex!(rig) || error()
+    add_vertex!(rig) || error("No vertex added")
     id = nv(rig)
-    for v in values(alive)
+    for v in values(merge(alive, pa))
       add_edge!(rig, id, v)
     end
     if types != nothing
@@ -126,9 +126,10 @@ function liveness_(x::Local, i, alive, branch, rig, lines, pa, es, types, values
   end
   # Proves that the graph does not need updating.
   if rig isa SimpleGraph
-    for v in values(alive)
+    for v in values(merge(alive, pa))
       if id != v
-        has_edge(rig, id, v) || error()
+        add_edge!(rig, id, v)
+        # has_edge(rig, id, v) || error("Edge not presnt")
       end
     end
     if types != nothing
@@ -136,7 +137,7 @@ function liveness_(x::Local, i, alive, branch, rig, lines, pa, es, types, values
       for (t, vs) in values_of_type
         t == typ && continue
         for v in vs
-          has_edge(rig, id, v) || error()
+          has_edge(rig, id, v) || error("Edge not resent")
         end
       end
       push!(get!(values_of_type, typ, Vector{Int}()), id)
@@ -155,9 +156,9 @@ function liveness_(x::SetLocal, i, alive, branch, rig, lines, perm_alive, extra_
 
     # Proves that the graph does not need updating.
     if rig isa SimpleGraph
-      for v in values(alive)
+      for v in values(merge(alive, perm_alive))
         if id != v
-          has_edge(rig, id, v) || error()
+          add_edge!(rig, id, v)
         end
       end
       if types != nothing
@@ -165,7 +166,7 @@ function liveness_(x::SetLocal, i, alive, branch, rig, lines, perm_alive, extra_
         for (t, vs) in values_of_type
           t == typ && continue
           for v in vs
-            has_edge(rig, id, v) || error()
+            has_edge(rig, id, v) || error("Ede not present")
           end
         end
         push!(get!(values_of_type, typ, Vector{Int}()), id)
@@ -436,7 +437,7 @@ function drop_removal(b, i, funcs)
         SetLocal(false, b[r].id)
         # Nop()
       elseif b[r] isa Block || b[r] isa Loop || b[r] isa If
-        error()
+        error("b[r] isa Block")
         # Check for result, remove if there is one by putting a drop before each
         # branch and running again. (Might get annoying around conditional
         # branches.) If there is no result (there should be) don't remove.
@@ -448,7 +449,7 @@ function drop_removal(b, i, funcs)
         # could be as simple as checking the function only calls pure functions
         # and doesn't alter memory/globals. Removing calls should probably only
         # be done in the julia ir.
-        error()
+        error("b[r] isa Call")
       else
         Nop()
       end
