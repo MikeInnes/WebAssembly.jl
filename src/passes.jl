@@ -212,9 +212,9 @@ function liveness( code::Vector{Instruction}
                  , branches::Vector{Tuple{Dict{Int,Int},Bool}}=Vector{Tuple{Dict{Int,Int},Bool}}()
                  , perm_alive::Dict{Int, Int}=Dict{Int, Int}()
                  ; rig::Union{Ref{Int}, SimpleGraph{Int}}=Ref{Int}(0)
-                 , lines::Union{Void, Vector{Vector{Vector{Int}}}}=nothing
-                 , extra_sets::Union{Void, Vector{Vector{Int}}}=nothing
-                 , types::Union{Void, Vector{WType}}=nothing
+                 , lines::Union{Nothing, Vector{Vector{Vector{Int}}}}=nothing
+                 , extra_sets::Union{Nothing, Vector{Vector{Int}}}=nothing
+                 , types::Union{Nothing, Vector{WType}}=nothing
                  , values_of_type::Dict{WType, Vector{Int}}=Dict{WType, Vector{Int}}()
                  )
   for i in length(code):-1:1

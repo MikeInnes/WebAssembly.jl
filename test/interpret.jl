@@ -113,7 +113,7 @@ function rand_test_module(fs, m, n_tests = 50, max = 10)
   @show length(fs)
   for i in eachindex(fs)
     for j in 1:n_tests
-      args = [rand(WebAssembly.jltype(typ)) % max for typ in m.funcs[i].params]
+      args = [rand(WebAssembly.jltype(typ)) % WebAssembly.jltype(typ)(max) for typ in m.funcs[i].params]
       wasm_fs[i](args...)[1] != fs[i](args...) && return false
     end
   end
@@ -244,14 +244,14 @@ end
 
       efs = filter(e->e.typ==:func, m.exports)
       defs = Dict(e.name => (xs...) -> s.fs[e.internalname][2](xs...)[1] for e in efs)
-      p = defs[:allocate](100)
-      g = defs[:allocate](100)
+      p = defs[:allocate](Int32(100))
+      g = defs[:allocate](Int32(100))
       @test defs[:arraylen_i32](p) == 0
-      @test defs[:arrayset_i32](p, 3, 0) == p
-      @test defs[:arrayref_i32](p, 0) == 3
+      @test defs[:arrayset_i32](p, Int32(3), Int32(0)) == p
+      @test defs[:arrayref_i32](p, zero(Int32)) == 3
       @test defs[:arraylen_i32](p) == 1
-      @test defs[:arrayset_i32](p,3,394) == p
-      @test defs[:arrayref_i32](p,394) == 3
+      @test defs[:arrayset_i32](p,Int32(3),Int32(394)) == p
+      @test defs[:arrayref_i32](p,Int32(394)) == 3
       @test defs[:arraylen_i32](p) == 395
     end
     ####
