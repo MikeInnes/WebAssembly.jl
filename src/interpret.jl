@@ -63,7 +63,6 @@ end
 # Returns dictionary of exported functions
 function interpret_module_dict(m::Module)
   s = State(m)
-  @show keys(s.fs)
   efs = filter(e->e.typ==:func, m.exports)
   return Dict(e.name => (xs...) -> s.fs[e.internalname][2](xs...)[1] for e in efs)
 end
@@ -161,7 +160,6 @@ function apInstr(i::MemoryUtility, ms, s)
   if i.name == :current_memory
     push!(ms, Int32(length(s.mem[1])/page_size))
   elseif i.name == :grow_memory
-    println("this isn't being called again")
     num_pages = pop!(ms)
     current_memory = Int32(length(s.mem[1])/page_size)
     if s.max[1] != nothing && num_pages + current_memory > s.max[1]

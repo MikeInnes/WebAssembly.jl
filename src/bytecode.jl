@@ -170,10 +170,8 @@ function getModule(m)
   fnames = vcat([i.name for i in f_imp],[f.name for f in m.funcs])
   f_ids = Dict(zip(fnames, 0:length(m.funcs)+length(f_imp)))
   m_ids  = Dict(zip([mem.name for mem in m.mems], 0:length(m.mems)))
-  @show m.mems
   space = Dict(:memory => m_ids, :func => f_ids)
   types, funcs, if_types = getTypes(m.funcs, f_imp)
-  @show m.exports
   exports = getExports(m.exports, space)
   code = getFunctionBodies(m.funcs, f_ids)
   names = nameSection(fnames)
@@ -181,7 +179,6 @@ function getModule(m)
   # globals = 0
   # @show m.mems
   memory = memorySection(m.mems)
-  println("what")
   start = m.start == nothing ? nothing : f_ids[m.start]
   # @show start
   imports = importSection(m.imports, if_types)
@@ -192,9 +189,7 @@ function getModule(m)
   # @show globals
   #
 
-  @show names
   # # Pair individual sections in order with their index
-  @show types
   sections = [ (1, types)
              , (2, imports)
              , (3, funcs)
@@ -355,7 +350,6 @@ function readModule(f)
     id > id_ || id == 0 || error("Sections must be in increasing order.")
     payload_len = readLeb128(f, UInt32)
     if id == 0
-      println("like this except you actually do something")
       # Only gets function names for now
       section_end = position(f) + payload_len
       name = readutf8(f)
@@ -365,7 +359,6 @@ function readModule(f)
           read_func_names = readNames(f, names)
         end
       end
-      @show names
       seek(f, section_end)
     elseif id == 1 # Types
       types = readTypes(f)
@@ -375,7 +368,6 @@ function readModule(f)
       f_types = readFuncTypes(f)
     elseif id == 5 # Memory
       memory = readMemory(f)
-      @show memory
     elseif id == 7 # Exports
       exports = readExports(f)
     elseif id == 6
@@ -391,7 +383,6 @@ function readModule(f)
       error("Unknown Section: $id")
     end
   end
-  @show names
   names = getNames(names, [(:func, length(f_types) + length(imports)), (:memory, length(memory))])
   # show(names[:func][1])
 

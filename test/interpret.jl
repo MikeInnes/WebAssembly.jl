@@ -109,8 +109,6 @@ end
 
 function rand_test_module(fs, m, n_tests = 50, max = 10)
   wasm_fs = interpret_module(m)
-  @show length(wasm_fs)
-  @show length(fs)
   for i in eachindex(fs)
     for j in 1:n_tests
       args = [rand(WebAssembly.jltype(typ)) % WebAssembly.jltype(typ)(max) for typ in m.funcs[i].params]
@@ -226,7 +224,6 @@ end
   using WebAssembly: getModule, readModule, State
   io = IOBuffer()
   write(io, getModule(m2))
-  @show typeof(io)
   m2_ = io |> seekstart |> readModule
   @test m2_.exports == m2.exports
   @test m2_.mems == m2.mems
