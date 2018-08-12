@@ -4,6 +4,8 @@ WType(::Type{Int32}) = i32
 WType(::Type{Int64}) = i64
 WType(::Type{Float32}) = f32
 WType(::Type{Float64}) = f64
+WType(t::Type{Array{T}}) where T = i32 # i64 in wasm64
+WType(t::Type{Array{T, N}}) where T where N = i32
 
 WType(::Type{<:Union{Bool,UInt32}}) = i32
 WType(::Type{UInt64}) = i64
@@ -42,10 +44,37 @@ struct SetLocal <: Instruction
   id::Int
 end
 
+struct GetGlobal <: Instruction
+  id::Int
+end
+
+struct SetGlobal <: Instruction
+  id::Int
+end
+
 struct Op <: Instruction
   typ::WType
   name::Symbol
 end
+
+struct MemoryOp <: Instruction
+  typ :: WType
+  name :: Symbol # :load or :store
+  store_type # E.g UInt8 for :load8_u
+  offset :: UInt # Effective address = value + offset
+  alignment :: UInt # Power of 2
+end
+# MemoryOp(op::Op) = MemoryOp(op, 0, 0)
+# MemoryOp(typ :: WType)
+MemoryOp(typ::WType, name::Symbol, offset::Unsigned, alignment::Unsigned) = MemoryOp(typ, name, jltype(typ), offset, alignment)
+# MemoryOp(typ::WType, name::Symbol, store_type, offset::Unsigned, alignment::Unsigned) = MemoryOp(typ, name, store_type, offset, alignment)
+# MemoryOp(typ::WType, name::Symbol, bytes::Unsigned, offset::Unsigned, alignment::Unsigned) = MemoryOp(typ, name, bytes, nothing, offset, alignment)
+
+struct MemoryUtility <: Instruction
+  name :: Symbol # :current_memory, :grow_memory
+  reserved :: Bool # Reserved but currently unused in MVP
+end
+MemoryUtility(name :: Symbol) = MemoryUtility(name, false)
 
 struct Select <: Instruction end
 
@@ -57,16 +86,24 @@ end
 
 struct Block <: Instruction
   body::Vector{Instruction}
+
+  result::Union{WType, Nothing}
 end
+Block(body) = Block(body, nothing)
 
 struct If <: Instruction
   t::Vector{Instruction}
   f::Vector{Instruction}
+
+  result::Union{WType, Nothing}
 end
+If(t,f) = If(t, f, nothing)
 
 struct Loop <: Instruction
   body::Vector{Instruction}
+  result::Union{WType, Nothing}
 end
+Loop(body) = Loop(body, nothing)
 
 struct Branch <: Instruction
   cond::Bool
@@ -83,10 +120,13 @@ struct Return <: Instruction end
 
 struct Unreachable <: Instruction end
 
+struct Drop <: Instruction end
+
 const unreachable = Unreachable()
 
 struct FuncType
-  # TODO
+  params::Vector{WType}
+  returns::Vector{WType}
 end
 
 struct Func
@@ -104,11 +144,13 @@ end
 struct Mem
   name::Symbol
   min::UInt32
-  max::Union{UInt32, Void}
+  max::Union{UInt32, Nothing}
 end
 
 struct Global
-  # TODO
+  typ::WType
+  mut::Bool
+  init::Integer
 end
 
 struct Elem
@@ -123,10 +165,10 @@ end
 
 struct Import
   mod::Symbol
+  field_str::Symbol
   name::Symbol
   typ::Symbol   # :func, :table, :memory, :global
-  params::Vector{WType}
-  returntype::WType
+  x::Union{FuncType} # Eventually support the other types
 end
 
 struct Export
@@ -143,7 +185,7 @@ struct Module
   globals::Vector{Global}
   elem::Vector{Elem}
   data::Vector{Data}
-  start::Ref{Int}
+  start::Union{Symbol, Nothing}
   imports::Vector{Import}
   exports::Vector{Export}
 end
@@ -161,6 +203,7 @@ Base.show(io::IO, i::Select)   = print(io, "select")
 Base.show(io::IO, i::Branch)   = print(io, i.cond ? "br_if " : "br ", i.level)
 Base.show(io::IO, i::Return)   = print(io, "return")
 Base.show(io::IO, i::Unreachable) = print(io, "unreachable")
+Base.show(io::IO, i::Drop)     = print(io, "drop")
 
 printwasm(io, x, level) = show(io, x)
 
@@ -216,12 +259,10 @@ end
 
 function printwasm(io, x::Import, level)
   print(io, "\n", "  "^(level))
-  print(io, "(import \"$(x.mod)\" \"$(x.name)\" ($(x.typ) \$$(x.mod)_$(x.name)")
-  if x.typ == :func && length(x.params) > 0
-    print(io, " (param")
-    foreach(p -> print(io, " $p"), x.params)
-    print(io, ")")
-    print(io, " (result ", x.returntype, ")")
+  print(io, "(import \"$(x.mod)\" \"$(x.field_str)\" ($(x.typ) \$$(x.name)")
+  if x.typ == :func && length(x.x.params) > 0
+    foreach(p -> print(io, " (param $p)"), x.x.params)
+    foreach(p -> print(io, " (result $p)"), x.x.returns)
   end
   print(io, "))")
 end
