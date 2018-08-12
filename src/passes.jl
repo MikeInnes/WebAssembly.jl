@@ -90,9 +90,9 @@ function optimise(m::Module, funcs=nothing)
     # body = f.body |> rmblocks |> makeifs |> deadcode
     # body = liveness_optimisations(f.body, funcs)
     # locals, body = allocate_registers(f.body, f.params, f.locals)
-    locals, body = allocate_registers(body, f.params, f.locals)
+    # locals, body = allocate_registers(body, f.params, f.locals)
     # Func(f.name, f.params, f.returns, locals, body)
-    Func(f.name, f.params, f.returns, locals, body)
+    Func(f.name, f.params, f.returns, f.locals, body)
   end
   return m
 end
@@ -319,6 +319,7 @@ function allocate_registers(b::Block, params, locals)
   end
 
   coloring = rig != SimpleGraph() ? greedy_color(rig, sort_degree=true) : LightGraphs.coloring(0, Vector{Int}())
+  # coloring = rig != SimpleGraph() ? greedy_color(rig, sort_degree=false) : LightGraphs.coloring(0, Vector{Int}())
 
   rs = Set(0:coloring.num_colors-1)
   c_to_r = Dict(coloring.colors[alive[i]] => i for i in 0:length(params)-1)
