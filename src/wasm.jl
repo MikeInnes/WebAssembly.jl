@@ -104,7 +104,7 @@ end
 struct Mem
   name::Symbol
   min::UInt32
-  max::Union{UInt32, Void}
+  max::Union{UInt32,Nothing}
 end
 
 struct Global

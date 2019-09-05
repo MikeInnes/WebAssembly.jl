@@ -96,7 +96,7 @@ operations =
 
 # Level Agnostic Functions
 
-apInstr(i::Nop,         ms) = Void()
+apInstr(i::Nop,         ms) = nothing
 apInstr(i::Local,       ms) = push!(ms,ms[i.id + 1]);
 apInstr(i::Const,       ms) = push!(ms,value(i));
 apInstr(i::Unreachable, ms) = error("Unreachable")
