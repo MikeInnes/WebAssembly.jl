@@ -1,5 +1,5 @@
 name = "WebAssembly"
-uuid = "257fb1ee-1f60-4fb9-9319-0434855b5737"
+uuid = "4f6df8df-4739-5653-a877-cf57ee625c27"
 version = "0.1.1"
 
 [deps]
