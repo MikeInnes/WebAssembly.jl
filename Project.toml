@@ -1,0 +1,9 @@
+name = "WebAssembly"
+uuid = "257fb1ee-1f60-4fb9-9319-0434855b5737"
+version = "0.1.1"
+
+[deps]
+BinaryProvider = "b99e7846-7c00-51b0-8f62-c81ae34c0232"
+
+[compat]
+julia = "1"
