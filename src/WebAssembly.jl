@@ -10,6 +10,7 @@ function __init__()
 end
 
 include("wasm.jl")
+include("ir.jl")
 include("passes.jl")
 include("looper.jl")
 include("io.jl")

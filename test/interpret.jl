@@ -50,7 +50,7 @@ relu_if_then_else_wasm = wast"""
   (return))
 """
 
-function pow(x, n)
+pow = function (x, n)
   r = 1
   while n > 0
     r *= x

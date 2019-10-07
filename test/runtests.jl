@@ -4,17 +4,21 @@ using WebAssembly: parsewast, interpretwasm, interpret_module, WType, Func, Modu
 
 @testset "WebAssembly" begin
 
-b = Block([Nop(), Nop()]) |> WebAssembly.nops
-@test isempty(b.body)
+  b = Block([Nop(), Nop()]) |> WebAssembly.nops
+  @test isempty(b.body)
 
-include("interpret.jl")
+  @testset "Interpreter" begin
+    include("interpret.jl")
+  end
 
-end
+  @testset "IR" begin
+    include("ir.jl")
+  end
 
-@testset "Import-export" begin
-
-m = WebAssembly.Module(FuncType[], Func[], Table[], Mem[], Global[], Elem[], Data[], Ref(0),
-           [Import(:env, :mathfun, :func, [i32, f64], f64)],
-           [Export(:fun, :fun, :func)])
+  @testset "Import-export" begin
+    m = WebAssembly.Module(FuncType[], Func[], Table[], Mem[], Global[], Elem[], Data[], Ref(0),
+               [Import(:env, :mathfun, :func, [i32, f64], f64)],
+               [Export(:fun, :fun, :func)])
+  end
 
 end

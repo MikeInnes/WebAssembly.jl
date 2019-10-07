@@ -47,6 +47,8 @@ struct Op <: Instruction
   name::Symbol
 end
 
+Base.getproperty(x::WType, op::Symbol) = Op(x, op)
+
 struct Select <: Instruction end
 
 struct Convert <: Instruction
@@ -135,6 +137,7 @@ struct Export
   typ::Symbol   # :func, :table, :memory, :global
 end
 
+# TODO perhaps split this into sections
 struct Module
   types::Vector{FuncType}
   funcs::Vector{Func}
@@ -147,6 +150,9 @@ struct Module
   imports::Vector{Import}
   exports::Vector{Export}
 end
+
+Module(; types = [], funcs = [], tables = [], mems = [], globals = [], elem = [], data = [], start = Ref(0), imports = [], exports = []) =
+  Module(types, funcs, tables, mems, globals, elem, data, start, imports, exports)
 
 # Printing
 
