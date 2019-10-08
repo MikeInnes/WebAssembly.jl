@@ -19,7 +19,7 @@ Write the WebAssembly module `m` to WebAssembly binary format in `filename`.
 function binary(m::Module, file)
   wast = tempname() * ".wast"
   write_wast(wast, m)
-  wast2wasm(wast, file)
+  run(`$(WABT.wast2wasm) $wast -o $file`)
   rm(wast)
   return
 end
