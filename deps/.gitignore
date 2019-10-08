@@ -1,3 +1,4 @@
 usr
 wabt_deps.jl
+binaryen_deps.jl
 build.log

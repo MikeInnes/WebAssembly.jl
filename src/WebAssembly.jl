@@ -5,6 +5,10 @@ module WABT
 include("../deps/wabt_deps.jl")
 end
 
+module Binaryen
+include("../deps/binaryen_deps.jl")
+end
+
 function __init__()
     WABT.check_deps()
 end
