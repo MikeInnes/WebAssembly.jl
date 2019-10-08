@@ -20,6 +20,7 @@ function binary(m::Module, file)
   wast = tempname() * ".wast"
   write_wast(wast, m)
   run(`$(WABT.wast2wasm) $wast -o $file`)
+  run(`$(Binaryen.wasm_opt) $file -O4 -o $file.opt`)
   rm(wast)
   return
 end
