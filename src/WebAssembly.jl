@@ -2,7 +2,7 @@ module WebAssembly
 
 # All of the WABt utilities are accessed through the following module:
 module WABT
-include("../deps/deps.jl")
+include("../deps/wabt_deps.jl")
 end
 
 function __init__()
