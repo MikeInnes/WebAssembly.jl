@@ -77,6 +77,7 @@ operations =
       ,:gt_s   => apN(2, >)
       ,:eq     => apN(2, ==)
       ,:ne     => apN(2, !=)
+      ,:gt     => apN(2, >)
       ,:eqz    => apN(1, x -> x == 0)
       ,:sub    => apN(2, -)
       ,:add    => apN(2, +)

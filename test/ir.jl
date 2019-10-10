@@ -9,7 +9,7 @@ add = let
   return!(ir, c)
 end
 
-func = irfunc(:foo, copy(add))
+func = irfunc(:add, copy(add))
 
 @test WebAssembly.interpretwasm(func, Dict(), [2, 3]) == [5.0]
 
@@ -24,6 +24,11 @@ relu = let
   return!(els, 0.0)
   ir
 end
+
+func = irfunc(:relu, copy(relu))
+
+@test WebAssembly.interpretwasm(func, Dict(), [5]) == [5]
+@test WebAssembly.interpretwasm(func, Dict(), [-5]) == [0]
 
 pow = let
   ir = IR()

@@ -1,6 +1,6 @@
 using IRTools
-using IRTools: IR, Variable, isexpr, stmt, argument!, return!, xcall, block!,
-  branch!, blocks, insertafter!, arguments, argtypes, isreturn
+using IRTools: IR, CFG, Variable, isexpr, stmt, argument!, return!, xcall, block!,
+  branch!, blocks, insertafter!, arguments, argtypes, isreturn, stackify, isconditional
 
 function locals!(ir::IR)
   locals = argtypes(ir)
@@ -22,6 +22,8 @@ function locals!(ir::IR)
         push!(b, env[arguments(br)[1]])
         push!(b, Return())
       else
+        isconditional(br) && push!(b, rename(br.condition))
+        push!(b, Branch(isconditional(br), br.block))
       end
     end
     empty!(IRTools.branches(b))
@@ -30,7 +32,29 @@ function locals!(ir::IR)
 end
 
 function reloop(ir)
-  Block([st.expr for (v, st) in ir])
+  scopes = []
+  targets = []
+  forw, back = stackify(CFG(ir))
+  push!(scopes, Block([]))
+  block!() = (bl = Block([]); push!(scopes[1].body, bl); pushfirst!(scopes, bl))
+  for b in blocks(ir)
+    any(br -> br[2] == b.id, forw) && (popfirst!(scopes); popfirst!(targets))
+    for (from, to) in forw
+      b.id == from || continue
+      block!()
+      pushfirst!(targets, to)
+    end
+    for (v, st) in b
+      if st.expr isa Branch
+        st.expr.cond && push!(scopes[1].body, i32.eqz)
+        target = findfirst(b -> b == st.expr.level, targets)-1
+        push!(scopes[1].body, Branch(st.expr.cond, target))
+      else
+        push!(scopes[1].body, st.expr)
+      end
+    end
+  end
+  return scopes[end]
 end
 
 function irfunc(name, ir)
