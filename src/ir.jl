@@ -1,6 +1,6 @@
 using IRTools
-using IRTools: IR, Variable, isexpr, stmt, argument!, return!, xcall, block!,
-  branch!, blocks, insertafter!, arguments, argtypes, isreturn
+using IRTools: IR, CFG, Variable, isexpr, stmt, argument!, return!, xcall, block!,
+  branch!, blocks, insertafter!, arguments, argtypes, isreturn, stackify, isconditional
 
 function locals!(ir::IR)
   locals = argtypes(ir)
@@ -22,6 +22,8 @@ function locals!(ir::IR)
         push!(b, env[arguments(br)[1]])
         push!(b, Return())
       else
+        isconditional(br) && push!(b, rename(br.condition))
+        push!(b, Branch(isconditional(br), br.block))
       end
     end
     empty!(IRTools.branches(b))
