@@ -41,8 +41,8 @@ uuid = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 
 [[IRTools]]
 deps = ["InteractiveUtils", "MacroTools", "Test"]
-git-tree-sha1 = "09e4091acb2c4aac29a673fab16e0f1aa8672b2a"
-repo-rev = "master"
+git-tree-sha1 = "a5d5d1e607be3a13f8148c810eae00e3cf70186a"
+repo-rev = "stackifier"
 repo-url = "https://github.com/MikeInnes/IRTools.jl.git"
 uuid = "7869d1d1-7146-5819-86e3-90919afe41df"
 version = "0.2.3"
