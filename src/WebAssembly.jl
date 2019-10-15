@@ -11,6 +11,7 @@ end
 
 function __init__()
     WABT.check_deps()
+    Binaryen.check_deps()
 end
 
 include("wasm.jl")
