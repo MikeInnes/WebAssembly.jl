@@ -2,3 +2,6 @@ usr
 wabt_deps.jl
 binaryen_deps.jl
 build.log
+wasmer.so
+wasmer.dll
+wasmer.dylib
