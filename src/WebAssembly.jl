@@ -10,8 +10,8 @@ include("../deps/binaryen_deps.jl")
 end
 
 function __init__()
-    WABT.check_deps()
-    Binaryen.check_deps()
+  WABT.check_deps()
+  Binaryen.check_deps()
 end
 
 include("wasm.jl")
@@ -21,6 +21,7 @@ include("looper.jl")
 include("io.jl")
 include("parser.jl")
 include("interpret.jl")
+include("wasmer.jl")
 
 module Instructions
 
