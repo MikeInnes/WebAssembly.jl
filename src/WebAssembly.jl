@@ -11,12 +11,12 @@ end
 
 function __init__()
     WABT.check_deps()
+    Binaryen.check_deps()
 end
 
 include("wasm.jl")
 include("ir.jl")
 include("passes.jl")
-include("looper.jl")
 include("io.jl")
 include("parser.jl")
 include("interpret.jl")
@@ -24,7 +24,7 @@ include("interpret.jl")
 module Instructions
 
 using ..WebAssembly: Instruction, Const, Nop, Local, SetLocal, Op, Select, Convert,
-  Block, If, Loop, Branch, Call, Return, Unreachable, Label, Goto, nop, unreachable
+  Block, If, Loop, Branch, Call, Return, Unreachable, nop, unreachable
 
 export Instruction, Const, Nop, Local, SetLocal, Op, Select, Convert,
   Block, If, Loop, Branch, Call, Return, Unreachable, Label, Goto, nop, unreachable
