@@ -21,7 +21,7 @@ function locals!(ir::IR)
     end
     for br in IRTools.branches(b)
       if isreturn(br)
-        push!(b, env[arguments(br)[1]])
+        push!(b, rename(arguments(br)[1]))
         push!(b, Return())
       else
         for (x, y) in zip(arguments(br), arguments(IRTools.block(ir, br.block)))
