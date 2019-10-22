@@ -8,6 +8,8 @@ WType(::Type{Float64}) = f64
 WType(::Type{<:Union{Bool,UInt32}}) = i32
 WType(::Type{UInt64}) = i64
 
+WType(T::WType) = T
+
 jltype(x::WType) = [Int32, Int64, Float32, Float64][Int(x)+1]
 
 abstract type Instruction end

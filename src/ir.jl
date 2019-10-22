@@ -4,6 +4,7 @@ using IRTools: IR, CFG, Variable, isexpr, stmt, argument!, return!, xcall, block
 
 function locals!(ir::IR)
   locals = argtypes(ir)
+  ret = []
   env = Dict{Any,Any}(x => Local(i-1) for (i, x) in enumerate(arguments(ir)))
   rename(x::Variable) = env[x]
   rename(x::Real) = Const(x)
@@ -21,6 +22,7 @@ function locals!(ir::IR)
     end
     for br in IRTools.branches(b)
       if isreturn(br)
+        ret = WType.(IRTools.exprtype.((ir,), arguments(br)))
         push!(b, rename(arguments(br)[1]))
         push!(b, Return())
       else
@@ -34,7 +36,7 @@ function locals!(ir::IR)
     end
     empty!(IRTools.branches(b))
   end
-  return ir, locals
+  return ir, locals, ret
 end
 
 isbackedge((from, to)) = to <= from
@@ -70,8 +72,8 @@ end
 
 function irfunc(name, ir)
   cfg = CFG(ir)
-  ir, locals = locals!(ir)
+  ir, locals, ret = locals!(ir)
   params = locals[1:length(arguments(ir))]
   locals = locals[length(arguments(ir))+1:end]
-  Func(name, params, [f64], locals, reloop(ir, cfg))
+  Func(name, params, ret, locals, reloop(ir, cfg))
 end
