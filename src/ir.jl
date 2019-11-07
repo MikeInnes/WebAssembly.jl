@@ -2,6 +2,12 @@ using IRTools
 using IRTools: IR, CFG, Variable, isexpr, stmt, argument!, return!, xcall, block!,
   branch!, blocks, insertafter!, arguments, argtypes, isreturn, stackify, isconditional
 
+struct WTuple
+  parts::Vector{WType}
+end
+
+WTuple(Ts::WType...) = WTuple([Ts...])
+
 function locals!(ir::IR)
   locals = argtypes(ir)
   ret = []
@@ -13,6 +19,7 @@ function locals!(ir::IR)
     (push!(locals, T); env[v] = Local(length(locals)-1))
   for b in blocks(ir)
     for (v, st) in b
+      st.expr isa Variable && (delete!(ir, v); env[v] = rename(st.expr); continue)
       isexpr(st.expr) || (delete!(ir, v); env[v] = Const(st.expr); continue)
       for arg in st.expr.args[2:end]
         insert!(ir, v, rename(arg))
@@ -22,7 +29,7 @@ function locals!(ir::IR)
     end
     for br in IRTools.branches(b)
       if isreturn(br)
-        ret = WType.(IRTools.exprtype.((ir,), arguments(br)))
+        ret = ltype.(arguments(br))
         push!(b, rename(arguments(br)[1]))
         push!(b, Return())
       else
