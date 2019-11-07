@@ -50,6 +50,7 @@ struct Op <: Instruction
 end
 
 Base.getproperty(x::WType, op::Symbol) = Op(x, op)
+Base.:(/)(x::Op, t::WType) = Op(x.typ, Symbol(x.name, "/", t))
 
 struct Select <: Instruction end
 
