@@ -8,6 +8,9 @@ WType(::Type{Float64}) = f64
 WType(::Type{<:Union{Bool,UInt32}}) = i32
 WType(::Type{UInt64}) = i64
 
+const wtypenames = Dict(Symbol(x) => x for x in instances(WType))
+WType(s::Symbol) = wtypenames[s]
+
 WType(T::WType) = T
 
 jltype(x::WType) = [Int32, Int64, Float32, Float64][Int(x)+1]
