@@ -14,11 +14,11 @@ end
 
 Write the WebAssembly module `m` to WebAssembly binary format in `filename`.
 """
-function binary(m::Module, file)
+function binary(m::Module, file; optimise = true)
   wat = tempname() * ".wat"
   write_wat(wat, m)
   run(`$(WABT.wat2wasm) $wat -o $file`)
-  run(`$(Binaryen.wasm_opt) $file -O4 -o $file`)
+  optimise && run(`$(Binaryen.wasm_opt) $file -O4 -o $file`)
   rm(wat)
   return
 end
