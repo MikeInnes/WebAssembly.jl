@@ -241,7 +241,11 @@ end
 function Base.show(io::IO, f::Func)
   print(io, "(func \$$(f.name)")
   foreach(p -> print(io, " (param $p)"), f.params)
-  foreach(p -> print(io, " (result $p)"), f.returns)
+  if !isempty(f.returns)
+    print(io, " (result ")
+    join(io, f.returns, " ")
+    print(io, ")")
+  end
   if !isempty(f.locals)
     print(io, "\n ")
     foreach(p -> print(io, " (local $p)"), f.locals)

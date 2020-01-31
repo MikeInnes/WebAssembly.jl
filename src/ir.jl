@@ -1,6 +1,7 @@
 using IRTools
 using IRTools: IR, CFG, Variable, isexpr, stmt, argument!, return!, xcall, block!,
   branch!, blocks, insertafter!, arguments, argtypes, isreturn, stackify, isconditional
+using Base: @get!
 
 struct WTuple
   parts::Vector{WType}
@@ -18,11 +19,13 @@ function locals!(ir::IR)
   locals = argtypes(ir)
   ret = []
   env = Dict{Any,Any}(x => Local(i-1) for (i, x) in enumerate(arguments(ir)))
+  tuples = Dict()
   rename(x::Variable) = env[x]
   rename(x::Real) = Const(x)
+  rename(x::Union{Const,Local}) = x
   ltype(x) = rename(x) isa Const ? rename(x).typ : locals[rename(x).id+1]
-  local!(v, T) = haskey(env, v) ? env[v] :
-    (push!(locals, T); env[v] = Local(length(locals)-1))
+  local!(T) = (push!(locals, T); Local(length(locals)-1))
+  local!(v, T) = @get!(env, v, local!(T))
   for b in blocks(ir)
     for (v, st) in b
       ex = st.expr
@@ -37,15 +40,30 @@ function locals!(ir::IR)
           insert!(ir, v, rename(arg))
         end
         ir[v] = ex.args[1]::Instruction
-        insertafter!(ir, v, SetLocal(false, local!(v, st.type).id))
+        if st.type isa WTuple
+          y = v
+          tuples[v] = [(l = local!(T); y = insertafter!(ir, y, SetLocal(false, l.id)); l)
+                       for T in st.type.parts]
+        else
+          insertafter!(ir, v, SetLocal(false, local!(v, st.type).id))
+        end
+      elseif isexpr(ex, :tuple)
+        tuples[v] = rename.(ex.args)
+        delete!(ir, v)
+      elseif isexpr(ex, :ref)
+        env[v] = tuples[ex.args[1]][ex.args[2]]
+        delete!(ir, v)
       else
         error("Unrecognised wasm expression $ex")
       end
     end
     for br in IRTools.branches(b)
       if isreturn(br)
-        ret = ltype.(arguments(br))
-        push!(b, rename(arguments(br)[1]))
+        args = haskey(tuples, arguments(br)[1]) ? tuples[arguments(br)[1]] : arguments(br)
+        ret = ltype.(args)
+        for arg in args
+          push!(b, rename(arg))
+        end
         push!(b, Return())
       else
         for (x, y) in zip(arguments(br), arguments(IRTools.block(ir, br.block)))
