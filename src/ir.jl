@@ -25,13 +25,22 @@ function locals!(ir::IR)
     (push!(locals, T); env[v] = Local(length(locals)-1))
   for b in blocks(ir)
     for (v, st) in b
-      st.expr isa Variable && (delete!(ir, v); env[v] = rename(st.expr); continue)
-      isexpr(st.expr) || (delete!(ir, v); env[v] = Const(st.expr); continue)
-      for arg in st.expr.args[2:end]
-        insert!(ir, v, rename(arg))
+      ex = st.expr
+      if ex isa Variable
+        delete!(ir, v)
+        env[v] = rename(ex)
+      elseif !isexpr(ex)
+        delete!(ir, v)
+        env[v] = Const(ex)
+      elseif isexpr(ex, :call)
+        for arg in ex.args[2:end]
+          insert!(ir, v, rename(arg))
+        end
+        ir[v] = ex.args[1]::Instruction
+        insertafter!(ir, v, SetLocal(false, local!(v, st.type).id))
+      else
+        error("Unrecognised wasm expression $ex")
       end
-      ir[v] = st.expr.args[1]
-      insertafter!(ir, v, SetLocal(false, local!(v, st.type).id))
     end
     for br in IRTools.branches(b)
       if isreturn(br)
