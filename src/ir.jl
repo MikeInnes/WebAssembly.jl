@@ -8,6 +8,12 @@ end
 
 WTuple(Ts::WType...) = WTuple([Ts...])
 
+function Base.show(io::IO, t::WTuple)
+  print(io, "(")
+  join(io, t.parts, ", ")
+  print(io, ")")
+end
+
 function locals!(ir::IR)
   locals = argtypes(ir)
   ret = []
