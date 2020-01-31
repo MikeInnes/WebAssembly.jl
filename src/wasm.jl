@@ -238,34 +238,26 @@ function printwasm(io, x::Import, level)
   print(io, "))")
 end
 
-function Base.show(io::IO, f::Func)
-  print(io, "(func \$$(f.name)")
-  foreach(p -> print(io, " (param $p)"), f.params)
-  if !isempty(f.returns)
-    print(io, " (result ")
-    join(io, f.returns, " ")
+function printvars(io, name, vs)
+  if !isempty(vs)
+    print(io, " (", name, " ")
+    join(io, vs, " ")
     print(io, ")")
   end
-  if !isempty(f.locals)
-    print(io, "\n ")
-    foreach(p -> print(io, " (local $p)"), f.locals)
-  end
-  printwasm_(io, f.body.body, 1)
-  print(io, ")")
 end
 
 function printwasm(io::IO, f::Func, level)
   print(io, "\n", "  "^(level))
   print(io, "(func \$$(f.name)")
-  foreach(p -> print(io, " (param $p)"), f.params)
-  foreach(p -> print(io, " (result $p)"), f.returns)
-  if !isempty(f.locals)
-    print(io, "\n ")
-    foreach(p -> print(io, " (local $p)"), f.locals)
-  end
+  printvars(io, "param", f.params)
+  printvars(io, "result", f.returns)
+  !isempty(f.locals) && print(io, "\n", "  "^level, " ")
+  printvars(io, "local", f.locals)
   printwasm_(io, f.body.body, level + 1)
   print(io, ")")
 end
+
+Base.show(io::IO, f::Func) = printwasm(io, f, 1)
 
 function Base.show(io::IO, m::Module)
   print(io, "(module")
