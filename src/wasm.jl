@@ -47,6 +47,14 @@ struct SetLocal <: Instruction
   id::Int
 end
 
+struct GetGlobal <: Instruction
+  id::Int
+end
+
+struct SetGlobal <: Instruction
+  id::Int
+end
+
 struct Op <: Instruction
   typ::WType
   name::Symbol
@@ -116,8 +124,13 @@ struct Mem
 end
 
 struct Global
-  # TODO
+  type::WType
+  mut::Bool
+  init::Instruction
 end
+
+Global(val, mut = true) = Global(WType(typeof(val)), mut, Const(val))
+Global(T::WType, mut = true) = Global(jltype(T)(0), mut)
 
 struct Elem
   # TODO
@@ -166,6 +179,8 @@ Base.show(io::IO, i::Nop)      = print(io, "nop")
 Base.show(io::IO, i::Const)    = print(io, i.typ, ".const ", value(i))
 Base.show(io::IO, i::Local)    = print(io, "local.get ", i.id)
 Base.show(io::IO, i::SetLocal) = print(io, i.tee ? "local.tee " : "local.set ", i.id)
+Base.show(io::IO, i::GetGlobal)= print(io, "global.get ", i.id)
+Base.show(io::IO, i::SetGlobal)= print(io, "global.set ", i.id)
 Base.show(io::IO, i::Op)       = print(io, i.typ, ".", i.name)
 Base.show(io::IO, i::Call)     = print(io, "call \$", i.name)
 Base.show(io::IO, i::Convert)  = print(io, i.to, ".", i.name, "/", i.from)
@@ -238,6 +253,17 @@ function printwasm(io, x::Import, level)
   print(io, "))")
 end
 
+function printwasm(io, x::Global, level)
+  print(io, "\n", "  "^(level))
+  print(io, "(global ")
+  if x.mut
+    print(io, "(mut ", x.type, ") ")
+  else
+    print(io, x.type, " ")
+  end
+  print(io, "(", x.init, "))")
+end
+
 function printvars(io, name, vs)
   if !isempty(vs)
     print(io, " (", name, " ")
@@ -263,6 +289,7 @@ function Base.show(io::IO, m::Module)
   print(io, "(module")
   foreach(p -> printwasm(io, p, 1), m.imports)
   foreach(p -> printwasm(io, p, 1), m.exports)
+  foreach(p -> printwasm(io, p, 1), m.globals)
   foreach(p -> printwasm(io, p, 1), m.mems)
   foreach(p -> printwasm(io, p, 1), m.data)
   foreach(p -> printwasm(io, p, 1), m.funcs)
