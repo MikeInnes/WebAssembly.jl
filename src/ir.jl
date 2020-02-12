@@ -41,8 +41,7 @@ function locals!(ir::IR)
         end
         ir[v] = ex.args[1]::Instruction
         if st.type isa WTuple
-          y = v
-          tuples[v] = [(l = local!(T); y = insertafter!(ir, y, SetLocal(false, l.id)); l)
+          tuples[v] = [(l = local!(T); insertafter!(ir, v, SetLocal(false, l.id)); l)
                        for T in st.type.parts]
         else
           insertafter!(ir, v, SetLocal(false, local!(v, st.type).id))

@@ -173,6 +173,8 @@ struct Module
   exports::Vector{Export}
 end
 
+func(m::Module, name) = m.funcs[findfirst(f -> f.name == name, m.funcs)]
+
 Module(; types = [], funcs = [], tables = [], mems = [], globals = [], elem = [], data = [], start = Ref(0), imports = [], exports = []) =
   Module(types, funcs, tables, mems, globals, elem, data, start, imports, exports)
 

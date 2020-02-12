@@ -21,6 +21,8 @@ include("io.jl")
 include("parser.jl")
 include("interpret.jl")
 
+include("passes/multi.jl")
+
 module Instructions
 
 using ..WebAssembly: Instruction, Const, Nop, Local, SetLocal, Op, Select, Convert,
