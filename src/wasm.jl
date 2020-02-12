@@ -121,7 +121,10 @@ struct Mem
   name::Symbol
   min::UInt32
   max::Union{UInt32,Nothing}
+  Mem(name::Symbol, min::Integer, max = nothing) = new(name, min, max)
 end
+
+Mem(min::Integer, max = nothing) = Mem(:memory, min, max)
 
 struct Global
   type::WType
