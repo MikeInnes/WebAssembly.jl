@@ -15,10 +15,12 @@ function Base.show(io::IO, t::WTuple)
   print(io, ")")
 end
 
+# TODO: simpler to treat all variables as potential tuples
+# Or better, strip out tuples before register allocation
 function locals!(ir::IR)
-  locals = argtypes(ir)
-  ret = []
-  env = Dict{Any,Any}(x => Local(i-1) for (i, x) in enumerate(arguments(ir)))
+  locals = WType[]
+  ret = WType[]
+  env = Dict()
   tuples = Dict()
   rename(x::Variable) = env[x]
   rename(x::Real) = Const(x)
@@ -26,6 +28,10 @@ function locals!(ir::IR)
   ltype(x) = rename(x) isa Const ? rename(x).typ : locals[rename(x).id+1]
   local!(T) = (push!(locals, T); Local(length(locals)-1))
   local!(v, T) = @get!(env, v, local!(T))
+  local!(v, T::WTuple) = tuples[v] = local!.(T.parts)
+  for (arg, T) in zip(arguments(ir), argtypes(ir))
+    local!(arg, T)
+  end
   for b in blocks(ir)
     for (v, st) in b
       ex = st.expr
@@ -37,7 +43,9 @@ function locals!(ir::IR)
         env[v] = Const(ex)
       elseif isexpr(ex, :call)
         for arg in ex.args[2:end]
-          insert!(ir, v, rename(arg))
+          haskey(tuples, arg) ?
+            [insert!(ir, v, tuples[arg][i]) for i in 1:length(tuples[arg])] :
+            insert!(ir, v, rename(arg))
         end
         ir[v] = ex.args[1]::Instruction
         if st.type isa WTuple
@@ -109,10 +117,14 @@ function reloop(ir, cfg)
   return scopes[end]
 end
 
+flattentype(Ts) = vcat(flattentype.(Ts)...)
+flattentype(T::WType) = [T]
+flattentype(T::WTuple) = T.parts
+
 function irfunc(name, ir)
   cfg = CFG(ir)
   ir, locals, ret = locals!(ir)
-  params = locals[1:length(arguments(ir))]
-  locals = locals[length(arguments(ir))+1:end]
+  params = flattentype(argtypes(ir))
+  locals = locals[length(params)+1:end]
   Func(name, params, ret, locals, reloop(ir, cfg))
 end
