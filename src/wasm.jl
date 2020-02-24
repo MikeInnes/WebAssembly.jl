@@ -56,12 +56,13 @@ struct SetGlobal <: Instruction
 end
 
 struct Op <: Instruction
-  typ::WType
   name::Symbol
 end
 
+Op(x::WType, op::Symbol) = Op(Symbol(x, ".", op))
+
 Base.getproperty(x::WType, op::Symbol) = Op(x, op)
-Base.:(/)(x::Op, t::WType) = Op(x.typ, Symbol(x.name, "/", t))
+Base.:(/)(x::Op, t::WType) = Op(Symbol(x.name, "/", t))
 
 struct Select <: Instruction end
 
@@ -186,7 +187,7 @@ Base.show(io::IO, i::Local)    = print(io, "local.get ", i.id)
 Base.show(io::IO, i::SetLocal) = print(io, i.tee ? "local.tee " : "local.set ", i.id)
 Base.show(io::IO, i::GetGlobal)= print(io, "global.get ", i.id)
 Base.show(io::IO, i::SetGlobal)= print(io, "global.set ", i.id)
-Base.show(io::IO, i::Op)       = print(io, i.typ, ".", i.name)
+Base.show(io::IO, i::Op)       = print(io, i.name)
 Base.show(io::IO, i::Call)     = print(io, "call \$", i.name)
 Base.show(io::IO, i::Convert)  = print(io, i.to, ".", i.name, "/", i.from)
 Base.show(io::IO, i::Select)   = print(io, "select")

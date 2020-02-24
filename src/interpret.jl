@@ -102,7 +102,7 @@ apInstr(i::Local,       ms) = push!(ms,ms[i.id + 1]);
 apInstr(i::Const,       ms) = push!(ms,value(i));
 apInstr(i::Unreachable, ms) = error("Unreachable")
 apInstr(i::Convert,     ms) = push!(ms, convert(jltype(i.to), float(pop!(ms))))
-apInstr(i::Op,          ms) = operations[i.name](ms)
+apInstr(i::Op,          ms) = operations[Symbol(split(string(i.name), ".")[2])](ms)
 
 # apInstr(i::SetLocal,    ms) = i.id + 1 == length(ms) ? ms[i.id + 1] = i.tee ? last(ms) : pop!(ms) : ms
 apInstr(i::SetLocal,    ms) = ms[i.id + 1] = i.tee ? last(ms) : pop!(ms)
