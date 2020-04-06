@@ -149,9 +149,10 @@ end
 struct Import
   mod::Symbol
   name::Symbol
+  as::Symbol
   typ::Symbol   # :func, :table, :memory, :global
   params::Vector{WType}
-  returntype::WType
+  result::Vector{WType}
 end
 
 struct Export
@@ -249,12 +250,16 @@ end
 
 function printwasm(io, x::Import, level)
   print(io, "\n", "  "^(level))
-  print(io, "(import \"$(x.mod)\" \"$(x.name)\" ($(x.typ) \$$(x.mod)_$(x.name)")
+  print(io, "(import \"$(x.mod)\" \"$(x.name)\" ($(x.typ) \$$(x.as)")
   if x.typ == :func && length(x.params) > 0
     print(io, " (param")
     foreach(p -> print(io, " $p"), x.params)
     print(io, ")")
-    print(io, " (result ", x.returntype, ")")
+  end
+  if x.typ == :func && length(x.result) > 0
+    print(io, " (result")
+    foreach(p -> print(io, " $p"), x.result)
+    print(io, ")")
   end
   print(io, "))")
 end
