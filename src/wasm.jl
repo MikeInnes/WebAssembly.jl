@@ -109,7 +109,7 @@ end
 struct Func
   name::Symbol
   params::Vector{WType}
-  returns::Vector{WType}
+  result::Vector{WType}
   locals::Vector{WType}
   body::Block
 end
@@ -287,7 +287,7 @@ function printwasm(io::IO, f::Func, level)
   print(io, "\n", "  "^(level))
   print(io, "(func \$$(f.name)")
   printvars(io, "param", f.params)
-  printvars(io, "result", f.returns)
+  printvars(io, "result", f.result)
   !isempty(f.locals) && print(io, "\n", "  "^level, " ")
   printvars(io, "local", f.locals)
   printwasm_(io, f.body.body, level + 1)

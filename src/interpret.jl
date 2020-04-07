@@ -5,10 +5,10 @@ function interpretwasm(f::Func, fs, args)
 
   apInstr(f.body, ms, 0, fs)
 
-  returns = popn!(ms, length(f.returns))
+  returns = popn!(ms, length(f.result))
 
   # Check to make sure the return types are all correct
-  for (rtyp, r) in zip(f.returns, returns)
+  for (rtyp, r) in zip(f.result, returns)
     if jltype(rtyp) != typeof(r)
       error("ERROR: Return type mismatch")
     end

@@ -12,11 +12,11 @@ end
 
 function multivalue!(mod, f, xs, slots)
   for (i, x) in enumerate(xs)
-    if x isa Return && length(f.returns) > 1
-      splice!(xs, i:0, reverse(SetGlobal.(globalids(f.returns, slots))))
+    if x isa Return && length(f.result) > 1
+      splice!(xs, i:0, reverse(SetGlobal.(globalids(f.result, slots))))
       return
     elseif x isa Call
-      rs = func(mod, x.name).returns
+      rs = func(mod, x.name).result
       length(rs) > 1 || continue
       splice!(xs, i+1:0, GetGlobal.(globalids(rs, slots)))
     elseif x isa Union{Block,If,Loop}
@@ -37,7 +37,7 @@ function multivalue_shim!(mod::Module)
     multivalue_shim!(mod, f, f.body, slots)
   end
   for f in mod.funcs
-    length(f.returns) > 1 && empty!(f.returns)
+    length(f.result) > 1 && empty!(f.result)
   end
   append!(mod.globals, Global.(slots))
   return mod

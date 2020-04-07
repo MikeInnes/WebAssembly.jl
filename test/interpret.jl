@@ -129,7 +129,7 @@ relu_wasm = relu_ifelse_wasm
 relu_wasm_expected = Func(Symbol("#relu_Int64"), [i64], [i64], [], Block([Const(0), Local(0), Local(0), Const(0), Op(i64, :lt_s), Select(), Return()]))
 @test relu_wasm.body.body == relu_wasm_expected.body.body
 @test relu_wasm.params == relu_wasm_expected.params
-@test relu_wasm.returns == relu_wasm_expected.returns
+@test relu_wasm.result == relu_wasm_expected.result
 @test relu_wasm.name == relu_wasm_expected.name
 
 @test rand_test_wasm(relu_ifelse, relu_wasm)
@@ -154,7 +154,7 @@ m = wast"""
 expected_func = Func(Symbol("addTwo"), [i32, i32], [i32], [], Block([Local(0), Local(1), Op(i32, :add)]))
 @test m.funcs[1].body.body == expected_func.body.body
 @test m.funcs[1].params == expected_func.params
-@test m.funcs[1].returns == expected_func.returns
+@test m.funcs[1].result == expected_func.result
 @test m.funcs[1].name == expected_func.name
 
 m2 = wast"""
