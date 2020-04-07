@@ -17,7 +17,7 @@ using WebAssembly: parsewast, interpretwasm, interpret_module, WType, Func, Modu
 
   @testset "Import-export" begin
     m = WebAssembly.Module(FuncType[], Func[], Table[], Mem[], Global[], Elem[], Data[], Ref(0),
-               [Import(:env, :mathfun, :func, [i32, f64], f64)],
+               [Import(:env, :mathfun, :env_mathfun, :func, [i32, f64], [f64])],
                [Export(:fun, :fun, :func)])
   end
 
