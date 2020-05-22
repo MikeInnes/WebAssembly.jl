@@ -1,7 +1,6 @@
 using IRTools
 using IRTools: IR, CFG, Variable, isexpr, stmt, argument!, return!, xcall, block!,
   branch!, blocks, insertafter!, arguments, argtypes, isreturn, stackify, isconditional
-using Base: @get!
 
 struct WTuple
   parts::Vector{WType}
@@ -27,7 +26,7 @@ function locals!(ir::IR)
   rename(x::Union{Const,Local}) = x
   ltype(x) = rename(x) isa Const ? rename(x).typ : locals[rename(x).id+1]
   local!(T) = (push!(locals, T); Local(length(locals)-1))
-  local!(v, T) = @get!(env, v, local!(T))
+  local!(v, T) = get!(() -> local!(T), env, v)
   local!(v, T::WTuple) = tuples[v] = local!.(T.parts)
   for (arg, T) in zip(arguments(ir), argtypes(ir))
     local!(arg, T)
@@ -122,6 +121,7 @@ flattentype(T::WType) = [T]
 flattentype(T::WTuple) = T.parts
 
 function irfunc(name, ir)
+  # @show name
   cfg = CFG(ir)
   ir, locals, ret = locals!(ir)
   params = flattentype(argtypes(ir))
