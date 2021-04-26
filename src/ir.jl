@@ -37,6 +37,8 @@ function locals!(ir::IR)
       if ex isa Variable
         delete!(ir, v)
         env[v] = rename(ex)
+      elseif ex == unreachable
+        # leave it alone
       elseif !isexpr(ex)
         delete!(ir, v)
         env[v] = Const(ex)
