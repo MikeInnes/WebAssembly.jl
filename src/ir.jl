@@ -36,7 +36,8 @@ function locals!(ir::IR)
       ex = st.expr
       if ex isa Variable
         delete!(ir, v)
-        env[v] = rename(ex)
+        _env = haskey(tuples, ex) ? tuples : env
+        _env[v] = _env[ex]
       elseif ex == unreachable
         # leave it alone
       elseif !isexpr(ex)
