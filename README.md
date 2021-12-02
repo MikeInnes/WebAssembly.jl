@@ -76,10 +76,15 @@ shell> wasm-dis test.wasm
   (local.get $2)))
 ```
 
-(If wasm-dis is not on your path you can use
+## Dependencies
 
-```julia
-julia> run(`$(WebAssembly.Binaryen.wasm_dis) test.wasm`);
-```
+The latest released version of this package (0.1.1) bundles some required
+WebAssembly tooling via [WABTBuilder](https://github.com/tshort/WABTBuilder) and
+[BinaryenBuilder](https://github.com/MikeInnes/BinaryenBuilder). As of writing,
+these are both a little out of date and incompatible with ARM macs.
 
-to get syntax-highlighted WASM in a terminal).
+For now, those dependencies are no longer bundled if you're using the master branch of
+the package. Instead, if you want to emit binaries and optimise them, you'll
+need `wat2wasm` and `wasm-opt` on your path, respectively. With homebrew you can
+get these both with `brew install wabt binaryen`. Alternatively, just avoid the
+`WebAssembly.binary` function – everything else will work fine.

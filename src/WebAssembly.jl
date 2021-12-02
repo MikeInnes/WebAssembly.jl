@@ -1,19 +1,5 @@
 module WebAssembly
 
-# All of the WABt utilities are accessed through the following module:
-module WABT
-include("../deps/wabt_deps.jl")
-end
-
-module Binaryen
-include("../deps/binaryen_deps.jl")
-end
-
-function __init__()
-    WABT.check_deps()
-    Binaryen.check_deps()
-end
-
 include("wasm.jl")
 include("ir.jl")
 include("passes.jl")
