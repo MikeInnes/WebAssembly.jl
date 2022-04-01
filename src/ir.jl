@@ -57,7 +57,15 @@ function locals!(ir::IR)
           insertafter!(ir, v, SetLocal(false, local!(v, st.type).id))
         end
       elseif isexpr(ex, :tuple)
-        tuples[v] = rename.(ex.args)
+        ps = []
+        for arg in ex.args
+          if haskey(tuples, arg)
+            append!(ps, tuples[arg])
+          else
+            push!(ps, rename(arg))
+          end
+        end
+        tuples[v] = ps
         delete!(ir, v)
       elseif isexpr(ex, :ref)
         env[v] = tuples[ex.args[1]][ex.args[2]]
