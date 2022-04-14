@@ -84,8 +84,18 @@ function locals!(ir::IR)
         push!(b, Return())
       else
         for (x, y) in zip(arguments(br), arguments(IRTools.block(ir, br.block)))
-          push!(b, rename(x))
-          push!(b, SetLocal(false, local!(y, ltype(x)).id))
+          if haskey(tuples, x)
+            ls = get!(tuples, y) do
+              [local!(T) for T in ir[x].type.parts]
+            end
+            for (xl, yl) in zip(tuples[x], ls)
+              push!(b, xl)
+              push!(b, SetLocal(false, yl.id))
+            end
+          else
+            push!(b, rename(x))
+            push!(b, SetLocal(false, local!(y, ltype(x)).id))
+          end
         end
         isconditional(br) && push!(b, rename(br.condition))
         push!(b, Branch(isconditional(br), br.block))
