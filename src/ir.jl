@@ -1,6 +1,7 @@
 using IRTools
 using IRTools: IR, CFG, Variable, isexpr, stmt, argument!, return!, xcall, block!,
   branch!, blocks, insertafter!, arguments, argtypes, isreturn, stackify, isconditional
+using IRTools.Inner: Component, components, entries, successors
 
 struct WTuple
   parts::Vector{WType}
@@ -106,35 +107,60 @@ function locals!(ir::IR)
   return ir, locals, ret
 end
 
-isbackedge((from, to)) = to <= from
+struct Relooping
+  ir::IR
+  cfg::CFG
+  scopes::Vector{Any}
+  targets::Vector{Int}
+end
+
+function pushscope!(rl::Relooping, bl, target)
+  push!(rl.scopes[end].body, bl)
+  push!(rl.scopes, bl)
+  push!(rl.targets, target)
+  return rl
+end
+
+function popscope!(rl::Relooping)
+  pop!(rl.scopes)
+  pop!(rl.targets)
+  return
+end
+
+function reloop!(rl::Relooping, i::Integer)
+  b = blocks(rl.ir)[i]
+  for (v, st) in b
+    if st.expr isa Branch
+      st.expr.cond && push!(rl.scopes[end].body, i32.eqz)
+      target = findfirst(b -> b == st.expr.level, reverse(rl.targets))-1
+      push!(rl.scopes[end].body, Branch(st.expr.cond, target))
+    else
+      push!(rl.scopes[end].body, st.expr)
+    end
+  end
+end
+
+function reloop!(rl::Relooping, cs::IRTools.Inner.Component)
+  # Insert blocks for forward jumps
+  for i in length(cs.children):-1:1
+    pushscope!(rl, Block([]), entries(cs.children[i])[1])
+  end
+  for i in 1:length(cs.children)
+    # Pop forward jumps to this block
+    popscope!(rl)
+    cs.children[i] isa Component && pushscope!(rl, Loop([]), entries(cs.children[i])[1])
+    # Block body
+    reloop!(rl, cs.children[i])
+    cs.children[i] isa Component && popscope!(rl)
+  end
+end
 
 function reloop(ir, cfg)
-  scopes = []
-  targets = []
-  forw, back = stackify(cfg)
-  push!(scopes, Block([]))
-  block!() = (bl = Block([]); push!(scopes[1].body, bl); pushfirst!(scopes, bl))
-  loop!() = (bl = Loop([]); push!(scopes[1].body, bl); pushfirst!(scopes, bl))
-  for b in blocks(ir)
-    any(br -> br[2] == b.id, forw) && (popfirst!(scopes); popfirst!(targets))
-    brs = vcat(filter(br -> br[1] == b.id, forw), filter(br -> br[2] == b.id, back))
-    sort!(brs, by = br -> isbackedge(br) ? (br[1], 1) : (br[2], -1), rev = true)
-    for br in brs
-      isbackedge(br) ? loop!() : block!()
-      pushfirst!(targets, br[2])
-    end
-    for (v, st) in b
-      if st.expr isa Branch
-        st.expr.cond && push!(scopes[1].body, i32.eqz)
-        target = findfirst(b -> b == st.expr.level, targets)-1
-        push!(scopes[1].body, Branch(st.expr.cond, target))
-      else
-        push!(scopes[1].body, st.expr)
-      end
-    end
-    any(br -> br[1] == b.id, back) && (popfirst!(scopes); popfirst!(targets))
-  end
-  return scopes[end]
+  rl = Relooping(ir, cfg, Any[Block([])], [])
+  reloop!(rl, components(cfg))
+  @assert length(rl.scopes) == 1
+  @assert isempty(rl.targets)
+  return rl.scopes[1]
 end
 
 flattentype(Ts) = vcat(flattentype.(Ts)...)
