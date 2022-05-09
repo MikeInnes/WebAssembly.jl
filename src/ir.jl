@@ -87,7 +87,7 @@ function locals!(ir::IR)
         for (x, y) in zip(arguments(br), arguments(IRTools.block(ir, br.block)))
           if haskey(tuples, x)
             ls = get!(tuples, y) do
-              [local!(T) for T in ir[x].type.parts]
+              [local!(T) for T in IRTools.exprtype(ir, y).parts]
             end
             for (xl, yl) in zip(tuples[x], ls)
               push!(b, xl)
