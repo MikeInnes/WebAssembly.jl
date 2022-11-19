@@ -83,6 +83,8 @@ function locals!(ir::IR)
           push!(b, rename(arg))
         end
         push!(b, Return())
+      elseif br.block == 0
+        push!(b, unreachable)
       else
         for (x, y) in zip(arguments(br), arguments(IRTools.block(ir, br.block)))
           if haskey(tuples, x)
