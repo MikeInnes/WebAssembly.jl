@@ -6,6 +6,7 @@ include("passes.jl")
 include("io.jl")
 include("parser.jl")
 include("interpret.jl")
+include("jsmodule.jl")
 
 include("passes/multi.jl")
 
